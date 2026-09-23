@@ -19,8 +19,8 @@ import {
   View,
 } from 'react-native';
 import Constants from 'expo-constants';
-import * as Updates from 'expo-updates';
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import {
   documentDirectory,
   StorageAccessFramework,
@@ -44,83 +44,20 @@ import UpdateModal from '../components/UpdateModal';
 const SETTINGS_FILE = (documentDirectory ?? '') + 'settings.json';
 
 export default function SettingsScreen() {
-  const { currentlyRunning } = Updates.useUpdates();
-
   // GitHub in-app APK updater state
   const [activeRepo, setActiveRepo] = useState<string>(DEFAULT_REPO);
   const [repoInput, setRepoInput] = useState<string>(DEFAULT_REPO_URL);
+  const [isEditingRepo, setIsEditingRepo] = useState(false);
   const [ghRelease, setGhRelease] = useState<GitHubReleaseInfo | null>(null);
   const [ghCheckPhase, setGhCheckPhase] = useState<'idle' | 'checking' | 'uptodate' | 'available' | 'error'>('idle');
   const [ghCheckError, setGhCheckError] = useState<string | null>(null);
   const [ghModalVisible, setGhModalVisible] = useState(false);
 
-  const isUpdatesSupported = Updates.isEnabled;
-
-  // ─── Update state machine ─────────────────────────────────────────────
-  // 'idle'        → button active, "Check for Updates"
-  // 'checking'    → spinner, button disabled
-  // 'downloading' → spinner + progress label, button disabled
-  // 'uptodate'    → gray disabled, "Up to Date ✓"
-  // 'error'       → red, "Retry"
-  type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'uptodate' | 'error';
-  const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('idle');
-  const [updateError, setUpdateError] = useState<string | null>(null);
-
   const [useCustomDirectory, setUseCustomDirectory] = useState(false);
   const [customDirectoryUri, setCustomDirectoryUri] = useState('');
   const [customDirectoryName, setCustomDirectoryName] = useState('');
 
-  // Version reads from the JS bundle (app.json imported by Metro), so it
-  // changes on every OTA push without needing a new native build.
-  let runningVersion = appJson.expo?.version || Constants.expoConfig?.version || '1.0.0';
-  if (currentlyRunning && !currentlyRunning.isEmbeddedLaunch) {
-    runningVersion = `${runningVersion} (OTA)`;
-  }
-
-  /**
-   * One-tap update handler:
-   * check → (if available) download → reloadAsync() automatically.
-   * The app hard-restarts; execution never continues past reloadAsync().
-   */
-  const handleCheckForUpdates = async () => {
-    if (!isUpdatesSupported) return;
-    setUpdateError(null);
-    try {
-      setUpdatePhase('checking');
-      const check = await Updates.checkForUpdateAsync();
-
-      if (!check.isAvailable) {
-        setUpdatePhase('uptodate');
-        return;
-      }
-
-      // Update found — download it
-      setUpdatePhase('downloading');
-      await Updates.fetchUpdateAsync();
-
-      // Download complete — restart immediately into the new bundle
-      await Updates.reloadAsync();
-      // (execution stops here — the app fully restarts)
-    } catch (err: any) {
-      const msg: string = err?.message ?? String(err);
-      // Gracefully ignore "updates disabled" in dev / expo-go
-      if (
-        msg.includes('ERR_UPDATES_DISABLED') ||
-        msg.includes('expo-updates is not enabled') ||
-        msg.includes('not enabled')
-      ) {
-        setUpdatePhase('idle');
-        return;
-      }
-      console.warn('[Updates] error:', msg);
-      setUpdateError(
-        msg.includes('network') || msg.includes('fetch') || msg.includes('connect') || msg.includes('ECONNREFUSED')
-          ? 'Cannot reach update server. Make sure the server is running on your PC and both devices are on the same Wi-Fi.'
-          : 'Update failed. Tap Retry to try again.'
-      );
-      setUpdatePhase('error');
-    }
-  };
+  const runningVersion = appJson.expo?.version || Constants.expoConfig?.version || '1.0.8';
 
   /**
    * Check for full APK releases on GitHub automatically using the target repo
@@ -134,7 +71,7 @@ export default function SettingsScreen() {
       setGhRelease(info);
       if (info.isAvailable) {
         setGhCheckPhase('available');
-        setGhModalVisible(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       } else {
         setGhCheckPhase('uptodate');
       }
@@ -325,227 +262,200 @@ export default function SettingsScreen() {
         <Row label="License" value="MIT" />
       </View>
 
-      {/* App Updates Section */}
-      <Text style={[s.section, s.mt]}>APP UPDATES</Text>
+      {/* Software Updates / GitHub Releases */}
+      <Text style={[s.section, s.mt]}>UPDATES</Text>
       <View style={s.card}>
-        <Row label="OTA Updates" value={isUpdatesSupported ? 'Enabled' : 'Disabled (Dev Mode)'} />
-        {currentlyRunning?.updateId ? (
-          <>
-            <Sep />
-            <Row label="Update ID" value={currentlyRunning.updateId.slice(0, 8) + '...'} />
-          </>
-        ) : null}
-        <Sep />
-        <View style={s.updatesContainer}>
-          {/* Status text */}
-          {updatePhase === 'error' && updateError ? (
-            <Text style={s.updateErrText}>{updateError}</Text>
-          ) : updatePhase === 'uptodate' ? (
-            <Text style={s.updateStatusText}>Your app is up to date.</Text>
-          ) : updatePhase === 'checking' ? (
-            <Text style={s.updateStatusText}>Checking for updates…</Text>
-          ) : updatePhase === 'downloading' ? (
-            <Text style={s.updateStatusText}>Downloading update… app will restart automatically.</Text>
-          ) : null}
-
-          {/* Main update button */}
-          <Pressable
+        {/* App Version & Status Header */}
+        <View style={s.updateHeader}>
+          <View style={s.updateIconBox}>
+            <Ionicons name="sparkles" size={17} color="#FF9F0A" />
+          </View>
+          <View style={s.updateInfo}>
+            <Text style={s.updateTitle}>AnyFetch for Android</Text>
+            <Text style={s.updateSubtitle}>Version {runningVersion}</Text>
+          </View>
+          <View
             style={[
-              s.updateBtn,
-              !isUpdatesSupported && s.updateBtnDisabled,
-              updatePhase === 'checking'    && s.updateBtnBusy,
-              updatePhase === 'downloading' && s.updateBtnBusy,
-              updatePhase === 'uptodate'    && s.updateBtnUpToDate,
-              updatePhase === 'error'       && s.updateBtnError,
-            ]}
-            disabled={
-              !isUpdatesSupported ||
-              updatePhase === 'checking' ||
-              updatePhase === 'downloading' ||
-              updatePhase === 'uptodate'
-            }
-            onPress={handleCheckForUpdates}
-          >
-            {updatePhase === 'checking' || updatePhase === 'downloading' ? (
-              <View style={s.updateBtnInner}>
-                <ActivityIndicator size="small" color="#000000" />
-                <Text style={s.updateBtnText}>
-                  {updatePhase === 'downloading' ? 'Downloading…' : 'Checking…'}
-                </Text>
-              </View>
-            ) : (
-              <Text style={[
-                s.updateBtnText,
-                updatePhase === 'uptodate'  && s.updateBtnUpToDateText,
-                !isUpdatesSupported         && s.updateBtnUpToDateText,
-                updatePhase === 'error'     && s.updateBtnErrorText,
-              ]}>
-                {updatePhase === 'uptodate'
-                  ? 'Up to Date  ✓'
-                  : updatePhase === 'error'
-                    ? 'Retry'
-                    : 'Check for Updates'}
-              </Text>
-            )}
-          </Pressable>
-        </View>
-      </View>
-
-      {/* GitHub Releases In-App APK Updates */}
-      <Text style={[s.section, s.mt]}>GITHUB APK RELEASES</Text>
-      <View style={s.card}>
-        <Row label="Current Version" value={`v${runningVersion}`} />
-        <Sep />
-        <Row
-          label="Latest on GitHub"
-          value={ghRelease ? `v${ghRelease.latestVersion}` : 'Not checked'}
-        />
-        <Sep />
-
-        {/* Configurable GitHub Repository Card */}
-        <View style={s.repoBox}>
-          <View style={s.repoHeaderRow}>
-            <View style={s.repoIconBadge}>
-              <Ionicons name="logo-github" size={16} color="#FF9F0A" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.repoTitle}>REPOSITORY (AUTO-FETCH)</Text>
-              <Text style={s.repoSub}>
-                Anyfetch connects to this repository and fetches updates automatically.
-              </Text>
-            </View>
-          </View>
-
-          <View style={s.inputWrapper}>
-            <Ionicons name="link-outline" size={16} color="#8E8E93" style={s.inputIcon} />
-            <TextInput
-              style={s.repoInput}
-              value={repoInput}
-              onChangeText={setRepoInput}
-              onSubmitEditing={() => handleSaveAndAutoCheckRepo(repoInput)}
-              placeholder="https://github.com/AbhishekS04/anyfetch-expo"
-              placeholderTextColor="#555558"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              returnKeyType="done"
-            />
-          </View>
-
-          <View style={s.repoActionRow}>
-            <Pressable
-              style={s.repoPillBtn}
-              onPress={handlePasteRepoFromClipboard}>
-              <Ionicons name="clipboard-outline" size={13} color="#FF9F0A" />
-              <Text style={s.repoPillBtnText}>Paste</Text>
-            </Pressable>
-
-            <Pressable
-              style={s.repoPillBtn}
-              onPress={handleResetRepoToDefault}>
-              <Ionicons name="refresh-outline" size={13} color="#8E8E93" />
-              <Text style={[s.repoPillBtnText, { color: '#8E8E93' }]}>Reset</Text>
-            </Pressable>
-
-            <View style={{ flex: 1 }} />
-
-            <Pressable
-              style={s.repoSaveBtn}
-              onPress={() => handleSaveAndAutoCheckRepo(repoInput)}>
-              <Ionicons name="flash-outline" size={13} color="#000000" />
-              <Text style={s.repoSaveBtnText}>Save & Fetch</Text>
-            </Pressable>
-          </View>
-
-          {/* Connection Status Pill */}
-          <View style={s.connStatusBadge}>
-            <View
-              style={[
-                s.connDot,
-                ghCheckPhase === 'available' || ghCheckPhase === 'uptodate'
-                  ? s.connDotGreen
-                  : ghCheckPhase === 'checking'
-                  ? s.connDotYellow
-                  : ghCheckPhase === 'error'
-                  ? s.connDotRed
-                  : s.connDotGray,
-              ]}
-            />
-            <Text style={s.connStatusText} numberOfLines={1}>
-              {ghCheckPhase === 'checking'
-                ? `Connecting to ${activeRepo}…`
-                : ghCheckPhase === 'available' && ghRelease
-                ? `Update v${ghRelease.latestVersion} found on ${activeRepo}`
-                : ghCheckPhase === 'uptodate'
-                ? `Connected to ${activeRepo} (Up to date)`
-                : ghCheckPhase === 'error'
-                ? `Failed to reach ${activeRepo}`
-                : `Target: ${activeRepo}`}
-            </Text>
-          </View>
-        </View>
-
-        <Sep />
-        <View style={s.updatesContainer}>
-          {ghCheckPhase === 'checking' ? (
-            <Text style={s.updateStatusText}>Checking GitHub for new releases…</Text>
-          ) : ghCheckPhase === 'available' && ghRelease ? (
-            <Text style={s.updateAvailableText}>
-              New version v{ghRelease.latestVersion} is available!
-            </Text>
-          ) : ghCheckPhase === 'uptodate' ? (
-            <Text style={s.updateStatusText}>You are running the latest GitHub release.</Text>
-          ) : ghCheckPhase === 'error' && ghCheckError ? (
-            <Text style={s.updateErrText}>{ghCheckError}</Text>
-          ) : (
-            <Text style={s.sub}>
-              Download and install new full APK builds directly inside the app without leaving.
-            </Text>
-          )}
-
-          <Pressable
-            style={[
-              s.updateBtn,
-              ghCheckPhase === 'checking' && s.updateBtnBusy,
-              ghCheckPhase === 'uptodate' && s.updateBtnUpToDate,
-              ghCheckPhase === 'error' && s.updateBtnError,
-            ]}
-            disabled={ghCheckPhase === 'checking'}
-            onPress={
-              ghCheckPhase === 'available'
-                ? () => setGhModalVisible(true)
-                : () => handleCheckGitHubRelease()
-            }>
+              s.statusBadge,
+              ghCheckPhase === 'uptodate' && s.statusBadgeSuccess,
+              ghCheckPhase === 'available' && s.statusBadgeWarning,
+              ghCheckPhase === 'error' && s.statusBadgeError,
+              ghCheckPhase === 'checking' && s.statusBadgeNeutral,
+            ]}>
             {ghCheckPhase === 'checking' ? (
-              <View style={s.updateBtnInner}>
-                <ActivityIndicator size="small" color="#000000" />
-                <Text style={s.updateBtnText}>Checking GitHub…</Text>
-              </View>
+              <ActivityIndicator size="small" color="#8E8E93" style={{ transform: [{ scale: 0.65 }] }} />
             ) : (
-              <Text
+              <View
                 style={[
-                  s.updateBtnText,
-                  ghCheckPhase === 'uptodate' && s.updateBtnUpToDateText,
-                  ghCheckPhase === 'error' && s.updateBtnErrorText,
-                ]}>
-                {ghCheckPhase === 'available'
-                  ? 'Install Update Now'
-                  : ghCheckPhase === 'uptodate'
-                  ? 'Up to Date  ✓'
-                  : ghCheckPhase === 'error'
-                  ? 'Retry GitHub Check'
-                  : 'Check for APK Release'}
-              </Text>
+                  s.statusDot,
+                  ghCheckPhase === 'uptodate' && s.statusDotSuccess,
+                  ghCheckPhase === 'available' && s.statusDotWarning,
+                  ghCheckPhase === 'error' && s.statusDotError,
+                ]}
+              />
             )}
-          </Pressable>
+            <Text
+              style={[
+                s.statusBadgeText,
+                ghCheckPhase === 'uptodate' && s.statusTextSuccess,
+                ghCheckPhase === 'available' && s.statusTextWarning,
+                ghCheckPhase === 'error' && s.statusTextError,
+              ]}>
+              {ghCheckPhase === 'checking'
+                ? 'Checking…'
+                : ghCheckPhase === 'available' && ghRelease
+                ? `v${ghRelease.latestVersion} Available`
+                : ghCheckPhase === 'uptodate'
+                ? 'Up to date'
+                : ghCheckPhase === 'error'
+                ? 'Failed'
+                : 'Current'}
+            </Text>
+          </View>
         </View>
-      </View>
 
-      <Pressable
-        style={s.ghBtn}
-        onPress={() => Linking.openURL(`https://github.com/${activeRepo}`).catch(() => {})}>
-        <Text style={s.ghBtnText}>View on GitHub ({activeRepo}) →</Text>
-      </Pressable>
+        {/* Update Available Banner */}
+        {ghCheckPhase === 'available' && ghRelease ? (
+          <View style={s.newReleaseCard}>
+            <View style={s.newReleaseHeader}>
+              <Ionicons name="arrow-down-circle" size={18} color="#FF9F0A" />
+              <Text style={s.newReleaseTitle}>New Version Ready</Text>
+              <Text style={s.newReleaseTag}>v{ghRelease.latestVersion}</Text>
+            </View>
+            <Text style={s.newReleaseNotes} numberOfLines={2}>
+              {ghRelease.releaseTitle || ghRelease.releaseNotes || 'Includes the latest features and fixes.'}
+            </Text>
+            <Pressable
+              style={s.installBtn}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+                setGhModalVisible(true);
+              }}>
+              <Ionicons name="download-outline" size={15} color="#000000" />
+              <Text style={s.installBtnText}>Download & Install APK</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={s.checkActionBox}>
+            <Pressable
+              style={[
+                s.checkBtn,
+                ghCheckPhase === 'checking' && s.checkBtnDisabled,
+                ghCheckPhase === 'error' && s.checkBtnRetry,
+              ]}
+              disabled={ghCheckPhase === 'checking'}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                handleCheckGitHubRelease();
+              }}>
+              {ghCheckPhase === 'checking' ? (
+                <View style={s.checkBtnInner}>
+                  <ActivityIndicator size="small" color="#8E8E93" />
+                  <Text style={s.checkBtnTextMuted}>Checking GitHub Releases…</Text>
+                </View>
+              ) : (
+                <View style={s.checkBtnInner}>
+                  <Ionicons
+                    name={ghCheckPhase === 'error' ? 'refresh' : 'refresh-outline'}
+                    size={15}
+                    color={ghCheckPhase === 'error' ? '#FF453A' : '#E5E5EA'}
+                  />
+                  <Text
+                    style={[
+                      s.checkBtnText,
+                      ghCheckPhase === 'error' && s.checkBtnTextError,
+                    ]}>
+                    {ghCheckPhase === 'error' ? 'Retry Check' : 'Check for Updates'}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+            {ghCheckError && ghCheckPhase === 'error' ? (
+              <Text style={s.errorHintText}>{ghCheckError}</Text>
+            ) : null}
+          </View>
+        )}
+
+        <Sep />
+
+        {/* Source Repository Row */}
+        <Pressable
+          style={s.channelRow}
+          onPress={() => setIsEditingRepo(!isEditingRepo)}>
+          <View style={s.channelLeft}>
+            <Ionicons name="logo-github" size={16} color="#8E8E93" />
+            <Text style={s.channelLabel}>Source Repository</Text>
+          </View>
+          <View style={s.channelRight}>
+            <Text style={s.channelValue} numberOfLines={1}>
+              {activeRepo}
+            </Text>
+            <Ionicons
+              name={isEditingRepo ? 'chevron-up' : 'chevron-down'}
+              size={13}
+              color="#8E8E93"
+            />
+          </View>
+        </Pressable>
+
+        {/* Collapsible Repository Editor */}
+        {isEditingRepo && (
+          <View style={s.repoDrawer}>
+            <Text style={s.repoDrawerHint}>
+              Specify a custom repository URL or owner/repo to fetch releases:
+            </Text>
+            <View style={s.drawerInputRow}>
+              <Ionicons name="link-outline" size={15} color="#8E8E93" style={{ marginRight: 6 }} />
+              <TextInput
+                style={s.drawerInput}
+                value={repoInput}
+                onChangeText={setRepoInput}
+                placeholder="AbhishekS04/anyfetch-expo"
+                placeholderTextColor="#555558"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                returnKeyType="done"
+                onSubmitEditing={() => handleSaveAndAutoCheckRepo(repoInput)}
+              />
+            </View>
+            <View style={s.drawerActionRow}>
+              <Pressable style={s.drawerSmallBtn} onPress={handlePasteRepoFromClipboard}>
+                <Ionicons name="clipboard-outline" size={12} color="#E5E5EA" />
+                <Text style={s.drawerSmallBtnText}>Paste</Text>
+              </Pressable>
+              <Pressable style={s.drawerSmallBtn} onPress={handleResetRepoToDefault}>
+                <Ionicons name="refresh-outline" size={12} color="#8E8E93" />
+                <Text style={[s.drawerSmallBtnText, { color: '#8E8E93' }]}>Reset</Text>
+              </Pressable>
+              <View style={{ flex: 1 }} />
+              <Pressable
+                style={s.drawerApplyBtn}
+                onPress={() => handleSaveAndAutoCheckRepo(repoInput)}>
+                <Text style={s.drawerApplyBtnText}>Apply</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        <Sep />
+
+        {/* Release Notes Link */}
+        <Pressable
+          style={s.linkRow}
+          onPress={() =>
+            Linking.openURL(`https://github.com/${activeRepo}/releases`).catch(() => {})
+          }>
+          <View style={s.channelLeft}>
+            <Ionicons name="newspaper-outline" size={16} color="#8E8E93" />
+            <Text style={s.channelLabel}>Release Notes</Text>
+          </View>
+          <View style={s.channelRight}>
+            <Text style={s.linkDomain}>GitHub</Text>
+            <Ionicons name="open-outline" size={13} color="#8E8E93" />
+          </View>
+        </Pressable>
+      </View>
 
       <Text style={s.footer}>
         anyfetch runs 100% locally on your device. Emojis and files are parsed and extracted locally. No servers. No tracing.
@@ -626,186 +536,274 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  updatesContainer: {
-    paddingVertical: 4,
+  /* Updates Section Styles */
+  updateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
   },
-  updateStatusText: {
-    color: '#8E8E93',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  updateAvailableText: {
-    color: '#34C759',
-    fontSize: 13,
-    fontWeight: '600',
-    lineHeight: 18,
-  },
-  updateErrText: {
-    color: '#FF453A',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  updateBtn: {
-    backgroundColor: '#FF9F0A',
+  updateIconBox: {
+    width: 38,
+    height: 38,
     borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255, 159, 10, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 42,
   },
-  updateBtnInner: {
+  updateInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  updateTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  updateSubtitle: {
+    color: '#8E8E93',
+    fontSize: 13,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#2C2C2E',
+  },
+  statusBadgeSuccess: {
+    backgroundColor: 'rgba(52, 199, 89, 0.12)',
+  },
+  statusBadgeWarning: {
+    backgroundColor: 'rgba(255, 159, 10, 0.15)',
+  },
+  statusBadgeError: {
+    backgroundColor: 'rgba(255, 69, 58, 0.12)',
+  },
+  statusBadgeNeutral: {
+    backgroundColor: '#2C2C2E',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#8E8E93',
+  },
+  statusDotSuccess: {
+    backgroundColor: '#34C759',
+  },
+  statusDotWarning: {
+    backgroundColor: '#FF9F0A',
+  },
+  statusDotError: {
+    backgroundColor: '#FF453A',
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  statusTextSuccess: {
+    color: '#34C759',
+  },
+  statusTextWarning: {
+    color: '#FF9F0A',
+  },
+  statusTextError: {
+    color: '#FF453A',
+  },
+  newReleaseCard: {
+    backgroundColor: '#121214',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 159, 10, 0.3)',
+    padding: 12,
+    gap: 8,
+    marginTop: 2,
+  },
+  newReleaseHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  updateBtnBusy: {
-    backgroundColor: 'rgba(255, 159, 10, 0.55)',
+  newReleaseTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
   },
-  updateBtnDisabled: {
-    backgroundColor: 'rgba(255, 159, 10, 0.4)',
-  },
-  updateBtnText: {
-    color: '#000000',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  updateBtnUpToDate: {
-    backgroundColor: '#2C2C2E',
-  },
-  updateBtnUpToDateText: {
-    color: '#8E8E93',
-  },
-  updateBtnError: {
-    backgroundColor: 'rgba(255, 69, 58, 0.18)',
-    borderWidth: 1,
-    borderColor: '#FF453A',
-  },
-  updateBtnErrorText: {
-    color: '#FF453A',
-  },
-
-  /* Repository Configuration Box */
-  repoBox: {
-    backgroundColor: '#121214',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-    padding: 14,
-    gap: 12,
-  },
-  repoHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  repoIconBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 159, 10, 0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  repoTitle: {
+  newReleaseTag: {
     color: '#FF9F0A',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    backgroundColor: 'rgba(255, 159, 10, 0.15)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
-  repoSub: {
+  newReleaseNotes: {
     color: '#8E8E93',
     fontSize: 12,
     lineHeight: 16,
-    marginTop: 2,
   },
-  inputWrapper: {
+  installBtn: {
+    backgroundColor: '#FF9F0A',
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#000000',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  installBtnText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  checkActionBox: {
+    gap: 6,
+    marginTop: 2,
+  },
+  checkBtn: {
+    backgroundColor: '#2C2C2E',
+    borderRadius: 9,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkBtnDisabled: {
+    opacity: 0.6,
+  },
+  checkBtnRetry: {
+    backgroundColor: 'rgba(255, 69, 58, 0.12)',
+    borderWidth: 1,
+    borderColor: '#FF453A',
+  },
+  checkBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkBtnText: {
+    color: '#E5E5EA',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  checkBtnTextMuted: {
+    color: '#8E8E93',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  checkBtnTextError: {
+    color: '#FF453A',
+  },
+  errorHintText: {
+    color: '#FF453A',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  channelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  channelLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  channelLabel: {
+    color: '#E5E5EA',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  channelRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '55%',
+  },
+  channelValue: {
+    color: '#8E8E93',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  repoDrawer: {
+    backgroundColor: '#121214',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#2C2C2E',
-    paddingHorizontal: 12,
-    height: 42,
+    padding: 12,
+    gap: 10,
+    marginTop: 4,
   },
-  inputIcon: {
-    marginRight: 8,
+  repoDrawerHint: {
+    color: '#8E8E93',
+    fontSize: 12,
+    lineHeight: 16,
   },
-  repoInput: {
+  drawerInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#000000',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    paddingHorizontal: 10,
+    height: 38,
+  },
+  drawerInput: {
     flex: 1,
     color: '#FFFFFF',
     fontSize: 13,
     paddingVertical: 0,
   },
-  repoActionRow: {
+  drawerActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  repoPillBtn: {
+  drawerSmallBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    gap: 4,
+    backgroundColor: '#2C2C2E',
+    borderRadius: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  repoPillBtnText: {
-    color: '#FF9F0A',
-    fontSize: 12,
+  drawerSmallBtnText: {
+    color: '#E5E5EA',
+    fontSize: 11,
     fontWeight: '600',
   },
-  repoSaveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+  drawerApplyBtn: {
     backgroundColor: '#FF9F0A',
-    borderRadius: 8,
+    borderRadius: 6,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 6,
   },
-  repoSaveBtnText: {
+  drawerApplyBtnText: {
     color: '#000000',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
-  connStatusBadge: {
+  linkRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#1C1C1E',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
+    paddingVertical: 4,
   },
-  connDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  connDotGreen: {
-    backgroundColor: '#34C759',
-  },
-  connDotYellow: {
-    backgroundColor: '#FF9F0A',
-  },
-  connDotRed: {
-    backgroundColor: '#FF453A',
-  },
-  connDotGray: {
-    backgroundColor: '#636366',
-  },
-  connStatusText: {
-    color: '#D1D1D6',
-    fontSize: 11,
+  linkDomain: {
+    color: '#8E8E93',
+    fontSize: 13,
     fontWeight: '500',
-    flex: 1,
   },
 });
