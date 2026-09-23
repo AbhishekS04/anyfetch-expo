@@ -121,21 +121,40 @@ async function tryFallbackTwitterApis(tweetId: string): Promise<TwExtractResult 
   return null;
 }
 
-export async function extractTwitter(url: string): Promise<TwExtractResult> {
-  const cleanUrl = extractUrlFromText(url);
+async function resolveTwitterShortlink(cleanUrl: string): Promise<string> {
+  if (!cleanUrl.includes('t.co/')) return cleanUrl;
 
-  // Step 1: Resolve t.co short links
-  let resolvedUrl = cleanUrl;
-  if (cleanUrl.includes('t.co/')) {
-    try {
-      const r = await fetch(cleanUrl, { method: 'HEAD', redirect: 'follow' });
-      resolvedUrl = r.url || cleanUrl;
-    } catch {
-      const r = await fetch(cleanUrl, { method: 'GET', redirect: 'follow' });
-      resolvedUrl = r.url || cleanUrl;
+  try {
+    const res = await fetch(cleanUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': TW_UA },
+      redirect: 'follow',
+    });
+
+    if (res.url && (res.url.includes('twitter.com') || res.url.includes('x.com'))) {
+      return res.url;
     }
+
+    const html = await res.text();
+    const metaRefresh = html.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["'][^;]+;\s*url=([^"']+)["']/i);
+    if (metaRefresh && metaRefresh[1]) {
+      return metaRefresh[1];
+    }
+
+    const titleUrl = html.match(/https?:\/\/(?:twitter|x)\.com\/[^"'\s<]+/i);
+    if (titleUrl) {
+      return titleUrl[0];
+    }
+  } catch (err) {
+    console.warn('[Twitter] Failed to resolve t.co link:', err);
   }
 
+  return cleanUrl;
+}
+
+export async function extractTwitter(url: string): Promise<TwExtractResult> {
+  const cleanUrl = extractUrlFromText(url);
+  const resolvedUrl = await resolveTwitterShortlink(cleanUrl);
   const tweetId = parseTweetId(resolvedUrl);
 
   // 1. Try Twitter Syndication API
