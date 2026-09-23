@@ -15,8 +15,15 @@ import {
   getContentUriAsync,
   createDownloadResumable,
   deleteAsync,
+  getInfoAsync,
+  readAsStringAsync,
+  writeAsStringAsync,
 } from 'expo-file-system/legacy';
 import appJson from '../../app.json';
+
+export const DEFAULT_REPO = 'AbhishekS04/anyfetch-expo';
+export const DEFAULT_REPO_URL = `https://github.com/${DEFAULT_REPO}`;
+const SETTINGS_FILE = (documentDirectory ?? '') + 'settings.json';
 
 export interface GitHubReleaseInfo {
   isAvailable: boolean;
@@ -28,6 +35,8 @@ export interface GitHubReleaseInfo {
   apkName: string | null;
   apkSize: number;
   publishedAt: string;
+  repo: string;
+  repoUrl: string;
 }
 
 export interface UpdateDownloadProgress {
@@ -36,10 +45,68 @@ export interface UpdateDownloadProgress {
   total: number;    // in bytes
 }
 
-const DEFAULT_REPOS = [
-  'AbhishekS04/anyfetch-expo',
-  'AbhishekS04/anyfetch',
-];
+/**
+ * Normalizes any GitHub URL or shorthand to "owner/repo"
+ * e.g. "https://github.com/AbhishekS04/anyfetch-expo" -> "AbhishekS04/anyfetch-expo"
+ *      "AbhishekS04/anyfetch-expo.git" -> "AbhishekS04/anyfetch-expo"
+ */
+export function normalizeGitHubRepo(input?: string): string {
+  if (!input) return DEFAULT_REPO;
+  let clean = input.trim();
+  // Strip protocols
+  clean = clean.replace(/^https?:\/\//i, '');
+  // Strip github.com/ or www.github.com/
+  clean = clean.replace(/^(?:www\.)?github\.com\//i, '');
+  // Strip trailing .git
+  clean = clean.replace(/\.git$/i, '');
+  // Strip trailing & leading slashes
+  clean = clean.replace(/^\/+|\/+$/g, '');
+
+  const parts = clean.split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]}/${parts[1]}`;
+  }
+  return clean || DEFAULT_REPO;
+}
+
+/**
+ * Reads the configured GitHub repo from local settings.json
+ */
+export async function getSavedGitHubRepo(): Promise<string> {
+  try {
+    const fileInfo = await getInfoAsync(SETTINGS_FILE);
+    if (fileInfo.exists) {
+      const content = await readAsStringAsync(SETTINGS_FILE);
+      const data = JSON.parse(content);
+      if (data?.githubRepo) {
+        return normalizeGitHubRepo(data.githubRepo);
+      }
+    }
+  } catch {
+    // Ignore and fallback
+  }
+  return DEFAULT_REPO;
+}
+
+/**
+ * Saves the configured GitHub repo to local settings.json
+ */
+export async function saveGitHubRepo(repoInput: string): Promise<string> {
+  const normalized = normalizeGitHubRepo(repoInput);
+  try {
+    let settings: any = {};
+    const fileInfo = await getInfoAsync(SETTINGS_FILE);
+    if (fileInfo.exists) {
+      const content = await readAsStringAsync(SETTINGS_FILE);
+      settings = JSON.parse(content);
+    }
+    settings.githubRepo = normalized;
+    await writeAsStringAsync(SETTINGS_FILE, JSON.stringify(settings));
+  } catch (err) {
+    console.warn('[Updater] Failed to save githubRepo setting:', err);
+  }
+  return normalized;
+}
 
 /**
  * Compare two semver strings: returns true if latest > current
@@ -64,32 +131,34 @@ export function getCurrentAppVersion(): string {
 }
 
 /**
- * Check GitHub Releases for an available APK update
+ * Check GitHub Releases for an available APK update.
+ * Automatically uses the saved repository if none is passed.
  */
 export async function checkForGitHubUpdate(customRepo?: string): Promise<GitHubReleaseInfo> {
   const currentVersion = getCurrentAppVersion();
-  const reposToTry = customRepo ? [customRepo, ...DEFAULT_REPOS] : DEFAULT_REPOS;
+  const targetRepo = normalizeGitHubRepo(customRepo || (await getSavedGitHubRepo()));
+  const repoUrl = `https://github.com/${targetRepo}`;
 
   let releaseData: any = null;
-  let targetRepo = '';
+  let fetchError = '';
 
-  for (const repo of reposToTry) {
-    try {
-      const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-          'User-Agent': 'Anyfetch-App-Updater',
-        },
-      });
+  try {
+    const res = await fetch(`https://api.github.com/repos/${targetRepo}/releases/latest`, {
+      headers: {
+        Accept: 'application/vnd.github.v3+json',
+        'User-Agent': 'Anyfetch-App-Updater',
+      },
+    });
 
-      if (res.ok) {
-        releaseData = await res.json();
-        targetRepo = repo;
-        break;
-      }
-    } catch {
-      // Try next repo
+    if (res.ok) {
+      releaseData = await res.json();
+    } else if (res.status === 404) {
+      fetchError = `No releases found on ${targetRepo}.`;
+    } else {
+      fetchError = `GitHub API HTTP ${res.status}`;
     }
+  } catch (err: any) {
+    fetchError = err?.message || 'Network error reaching GitHub.';
   }
 
   if (!releaseData || !releaseData.tag_name) {
@@ -98,11 +167,13 @@ export async function checkForGitHubUpdate(customRepo?: string): Promise<GitHubR
       currentVersion,
       latestVersion: currentVersion,
       releaseTitle: '',
-      releaseNotes: '',
+      releaseNotes: fetchError || 'No new updates found.',
       apkUrl: null,
       apkName: null,
       apkSize: 0,
       publishedAt: '',
+      repo: targetRepo,
+      repoUrl,
     };
   }
 
@@ -110,7 +181,7 @@ export async function checkForGitHubUpdate(customRepo?: string): Promise<GitHubR
   const latestVersion = rawTag.replace(/^v/i, '').trim();
   const isAvailable = isNewerVersion(latestVersion, currentVersion);
 
-  // Find APK asset
+  // Find APK asset in release
   const assets: any[] = Array.isArray(releaseData.assets) ? releaseData.assets : [];
   const apkAsset = assets.find(
     (a: any) =>
@@ -125,9 +196,11 @@ export async function checkForGitHubUpdate(customRepo?: string): Promise<GitHubR
     releaseTitle: releaseData.name || rawTag,
     releaseNotes: releaseData.body || 'New improvements and bug fixes.',
     apkUrl: apkAsset?.browser_download_url ?? null,
-    apkName: apkAsset?.name ?? 'anyfetch-update.apk',
+    apkName: apkAsset?.name ?? `anyfetch-v${latestVersion}.apk`,
     apkSize: apkAsset?.size ?? 0,
     publishedAt: releaseData.published_at || '',
+    repo: targetRepo,
+    repoUrl,
   };
 }
 

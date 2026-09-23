@@ -35,15 +35,30 @@ if (!fs.existsSync(androidDir)) {
   });
 }
 
-// Ensure gradlew is executable on unix systems
-const gradlewPath = path.join(androidDir, 'gradlew');
-if (process.platform !== 'win32' && fs.existsSync(gradlewPath)) {
-  try {
-    fs.chmodSync(gradlewPath, 0o755);
-  } catch (e) {
-    // ignore
+// Auto-detect Android SDK & JDK if not in environment
+if (!process.env.ANDROID_HOME) {
+  const possibleSdk = '/home/abhishek/Android/Sdk';
+  if (fs.existsSync(possibleSdk)) {
+    process.env.ANDROID_HOME = possibleSdk;
   }
 }
+
+if (!process.env.JAVA_HOME) {
+  const possibleJdks = [
+    '/run/media/abhishek/BBC/repos/expo-tracker/jdk-21',
+    '/home/abhishek/.local/share/JetBrains/Toolbox/apps/webstorm/jbr',
+  ];
+  for (const jdk of possibleJdks) {
+    if (fs.existsSync(jdk)) {
+      process.env.JAVA_HOME = jdk;
+      process.env.PATH = `${path.join(jdk, 'bin')}:${process.env.PATH}`;
+      break;
+    }
+  }
+}
+
+console.log(`[Info] Using ANDROID_HOME: ${process.env.ANDROID_HOME || '(default)'}`);
+console.log(`[Info] Using JAVA_HOME:    ${process.env.JAVA_HOME || '(default)'}\n`);
 
 console.log('[1/3] Building Release APK with Gradle...');
 const gradlewCmd = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';

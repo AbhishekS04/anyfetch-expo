@@ -15,10 +15,12 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
+import * as Clipboard from 'expo-clipboard';
 import {
   documentDirectory,
   StorageAccessFramework,
@@ -28,7 +30,15 @@ import {
 } from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import appJson from '../../app.json';
-import { checkForGitHubUpdate, GitHubReleaseInfo } from '../services/githubUpdate';
+import {
+  checkForGitHubUpdate,
+  getSavedGitHubRepo,
+  saveGitHubRepo,
+  DEFAULT_REPO,
+  DEFAULT_REPO_URL,
+  normalizeGitHubRepo,
+  GitHubReleaseInfo,
+} from '../services/githubUpdate';
 import UpdateModal from '../components/UpdateModal';
 
 const SETTINGS_FILE = (documentDirectory ?? '') + 'settings.json';
@@ -37,6 +47,8 @@ export default function SettingsScreen() {
   const { currentlyRunning } = Updates.useUpdates();
 
   // GitHub in-app APK updater state
+  const [activeRepo, setActiveRepo] = useState<string>(DEFAULT_REPO);
+  const [repoInput, setRepoInput] = useState<string>(DEFAULT_REPO_URL);
   const [ghRelease, setGhRelease] = useState<GitHubReleaseInfo | null>(null);
   const [ghCheckPhase, setGhCheckPhase] = useState<'idle' | 'checking' | 'uptodate' | 'available' | 'error'>('idle');
   const [ghCheckError, setGhCheckError] = useState<string | null>(null);
@@ -111,13 +123,14 @@ export default function SettingsScreen() {
   };
 
   /**
-   * Check for full APK releases on GitHub
+   * Check for full APK releases on GitHub automatically using the target repo
    */
-  const handleCheckGitHubRelease = async () => {
+  const handleCheckGitHubRelease = async (repoToUse?: string) => {
+    const target = normalizeGitHubRepo(repoToUse || activeRepo);
     setGhCheckPhase('checking');
     setGhCheckError(null);
     try {
-      const info = await checkForGitHubUpdate();
+      const info = await checkForGitHubUpdate(target);
       setGhRelease(info);
       if (info.isAvailable) {
         setGhCheckPhase('available');
@@ -131,18 +144,54 @@ export default function SettingsScreen() {
     }
   };
 
+  /**
+   * Saves the GitHub repository and immediately triggers automatic update check
+   */
+  const handleSaveAndAutoCheckRepo = async (rawUrl: string) => {
+    const normalized = normalizeGitHubRepo(rawUrl);
+    setActiveRepo(normalized);
+    setRepoInput(`https://github.com/${normalized}`);
+    await saveGitHubRepo(normalized);
+    await handleCheckGitHubRelease(normalized);
+  };
+
+  const handlePasteRepoFromClipboard = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text) {
+        await handleSaveAndAutoCheckRepo(text);
+      } else {
+        Alert.alert('Clipboard Empty', 'No URL found in clipboard.');
+      }
+    } catch (err: any) {
+      Alert.alert('Clipboard Error', err?.message || 'Could not read clipboard.');
+    }
+  };
+
+  const handleResetRepoToDefault = async () => {
+    await handleSaveAndAutoCheckRepo(DEFAULT_REPO);
+  };
+
   // Load settings on mount
   useEffect(() => {
     async function loadSettings() {
       try {
         const fileInfo = await getInfoAsync(SETTINGS_FILE);
+        let repoToInit = DEFAULT_REPO;
         if (fileInfo.exists) {
           const content = await readAsStringAsync(SETTINGS_FILE);
           const settings = JSON.parse(content);
           setUseCustomDirectory(!!settings.useCustomDirectory);
           setCustomDirectoryUri(settings.customDirectoryUri ?? '');
           setCustomDirectoryName(settings.customDirectoryName ?? '');
+          if (settings.githubRepo) {
+            repoToInit = normalizeGitHubRepo(settings.githubRepo);
+          }
         }
+        setActiveRepo(repoToInit);
+        setRepoInput(`https://github.com/${repoToInit}`);
+        // Automatic fetch immediately upon opening settings
+        handleCheckGitHubRelease(repoToInit);
       } catch (err: any) {
         Alert.alert('Failed to load settings', err?.message ?? 'Unknown error');
       }
@@ -352,6 +401,91 @@ export default function SettingsScreen() {
           value={ghRelease ? `v${ghRelease.latestVersion}` : 'Not checked'}
         />
         <Sep />
+
+        {/* Configurable GitHub Repository Card */}
+        <View style={s.repoBox}>
+          <View style={s.repoHeaderRow}>
+            <View style={s.repoIconBadge}>
+              <Ionicons name="logo-github" size={16} color="#FF9F0A" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.repoTitle}>REPOSITORY (AUTO-FETCH)</Text>
+              <Text style={s.repoSub}>
+                Anyfetch connects to this repository and fetches updates automatically.
+              </Text>
+            </View>
+          </View>
+
+          <View style={s.inputWrapper}>
+            <Ionicons name="link-outline" size={16} color="#8E8E93" style={s.inputIcon} />
+            <TextInput
+              style={s.repoInput}
+              value={repoInput}
+              onChangeText={setRepoInput}
+              onSubmitEditing={() => handleSaveAndAutoCheckRepo(repoInput)}
+              placeholder="https://github.com/AbhishekS04/anyfetch-expo"
+              placeholderTextColor="#555558"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              returnKeyType="done"
+            />
+          </View>
+
+          <View style={s.repoActionRow}>
+            <Pressable
+              style={s.repoPillBtn}
+              onPress={handlePasteRepoFromClipboard}>
+              <Ionicons name="clipboard-outline" size={13} color="#FF9F0A" />
+              <Text style={s.repoPillBtnText}>Paste</Text>
+            </Pressable>
+
+            <Pressable
+              style={s.repoPillBtn}
+              onPress={handleResetRepoToDefault}>
+              <Ionicons name="refresh-outline" size={13} color="#8E8E93" />
+              <Text style={[s.repoPillBtnText, { color: '#8E8E93' }]}>Reset</Text>
+            </Pressable>
+
+            <View style={{ flex: 1 }} />
+
+            <Pressable
+              style={s.repoSaveBtn}
+              onPress={() => handleSaveAndAutoCheckRepo(repoInput)}>
+              <Ionicons name="flash-outline" size={13} color="#000000" />
+              <Text style={s.repoSaveBtnText}>Save & Fetch</Text>
+            </Pressable>
+          </View>
+
+          {/* Connection Status Pill */}
+          <View style={s.connStatusBadge}>
+            <View
+              style={[
+                s.connDot,
+                ghCheckPhase === 'available' || ghCheckPhase === 'uptodate'
+                  ? s.connDotGreen
+                  : ghCheckPhase === 'checking'
+                  ? s.connDotYellow
+                  : ghCheckPhase === 'error'
+                  ? s.connDotRed
+                  : s.connDotGray,
+              ]}
+            />
+            <Text style={s.connStatusText} numberOfLines={1}>
+              {ghCheckPhase === 'checking'
+                ? `Connecting to ${activeRepo}…`
+                : ghCheckPhase === 'available' && ghRelease
+                ? `Update v${ghRelease.latestVersion} found on ${activeRepo}`
+                : ghCheckPhase === 'uptodate'
+                ? `Connected to ${activeRepo} (Up to date)`
+                : ghCheckPhase === 'error'
+                ? `Failed to reach ${activeRepo}`
+                : `Target: ${activeRepo}`}
+            </Text>
+          </View>
+        </View>
+
+        <Sep />
         <View style={s.updatesContainer}>
           {ghCheckPhase === 'checking' ? (
             <Text style={s.updateStatusText}>Checking GitHub for new releases…</Text>
@@ -380,7 +514,7 @@ export default function SettingsScreen() {
             onPress={
               ghCheckPhase === 'available'
                 ? () => setGhModalVisible(true)
-                : handleCheckGitHubRelease
+                : () => handleCheckGitHubRelease()
             }>
             {ghCheckPhase === 'checking' ? (
               <View style={s.updateBtnInner}>
@@ -409,8 +543,8 @@ export default function SettingsScreen() {
 
       <Pressable
         style={s.ghBtn}
-        onPress={() => Linking.openURL('https://github.com/AbhishekS04/anyfetch-expo').catch(() => {})}>
-        <Text style={s.ghBtnText}>View on GitHub →</Text>
+        onPress={() => Linking.openURL(`https://github.com/${activeRepo}`).catch(() => {})}>
+        <Text style={s.ghBtnText}>View on GitHub ({activeRepo}) →</Text>
       </Pressable>
 
       <Text style={s.footer}>
@@ -550,5 +684,128 @@ const s = StyleSheet.create({
   },
   updateBtnErrorText: {
     color: '#FF453A',
+  },
+
+  /* Repository Configuration Box */
+  repoBox: {
+    backgroundColor: '#121214',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    padding: 14,
+    gap: 12,
+  },
+  repoHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  repoIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 159, 10, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  repoTitle: {
+    color: '#FF9F0A',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  repoSub: {
+    color: '#8E8E93',
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#000000',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    paddingHorizontal: 12,
+    height: 42,
+  },
+  inputIcon: {
+    marginRight: 8,
+  },
+  repoInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 13,
+    paddingVertical: 0,
+  },
+  repoActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  repoPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#1C1C1E',
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  repoPillBtnText: {
+    color: '#FF9F0A',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  repoSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FF9F0A',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  repoSaveBtnText: {
+    color: '#000000',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  connStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#1C1C1E',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+  },
+  connDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  connDotGreen: {
+    backgroundColor: '#34C759',
+  },
+  connDotYellow: {
+    backgroundColor: '#FF9F0A',
+  },
+  connDotRed: {
+    backgroundColor: '#FF453A',
+  },
+  connDotGray: {
+    backgroundColor: '#636366',
+  },
+  connStatusText: {
+    color: '#D1D1D6',
+    fontSize: 11,
+    fontWeight: '500',
+    flex: 1,
   },
 });

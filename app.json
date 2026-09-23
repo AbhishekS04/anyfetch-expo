@@ -2,7 +2,7 @@
   "expo": {
     "name": "anyfetch",
     "slug": "anyfetch",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "backgroundColor": "#000000",
     "icon": "./assets/icon.png",
@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.abhishek.anyfetch"
     },
     "android": {
+      "versionCode": 8,
       "backgroundColor": "#000000",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

@@ -91,12 +91,20 @@ export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateM
           </View>
 
           {/* Size & Info */}
-          {releaseInfo.apkSize > 0 && (
-            <View style={s.metaBadge}>
-              <Ionicons name="cloud-download-outline" size={14} color="#8E8E93" />
-              <Text style={s.metaText}>APK Size: {formatBytes(releaseInfo.apkSize)}</Text>
-            </View>
-          )}
+          <View style={s.metaRow}>
+            {releaseInfo.apkSize > 0 && (
+              <View style={s.metaBadge}>
+                <Ionicons name="cloud-download-outline" size={14} color="#8E8E93" />
+                <Text style={s.metaText}>APK: {formatBytes(releaseInfo.apkSize)}</Text>
+              </View>
+            )}
+            {releaseInfo.repo ? (
+              <View style={s.metaBadge}>
+                <Ionicons name="logo-github" size={13} color="#FF9F0A" />
+                <Text style={s.metaText} numberOfLines={1}>{releaseInfo.repo}</Text>
+              </View>
+            ) : null}
+          </View>
 
           {/* Release Notes */}
           <View style={s.notesContainer}>
@@ -215,6 +223,12 @@ const s = StyleSheet.create({
     color: '#8E8E93',
     fontSize: 13,
   },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   metaBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -223,7 +237,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    alignSelf: 'flex-start',
     borderWidth: 1,
     borderColor: '#2C2C2E',
   },
