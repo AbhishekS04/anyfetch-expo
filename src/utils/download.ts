@@ -16,7 +16,8 @@ import {
   getInfoAsync,
 } from 'expo-file-system/legacy';
 import { EncodingType } from 'expo-file-system';
-import * as Sharing from 'expo-sharing'
+import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 
 export interface DownloadProgress {
@@ -198,10 +199,11 @@ export async function downloadMedia(
       };
     }
 
-    // ── Save via SAF or share sheet ────────────────────────────────────────────
-    let savedToSaf = false;
+    // ── Save to Gallery, Custom SAF folder, or fallback to share sheet ───────
+    let saved = false;
     let finalPath = downloadedUri;
 
+    // 1. Check if user configured a custom StorageAccessFramework directory in Settings
     try {
       const settingsFile = (documentDirectory ?? '') + 'settings.json';
       const fileInfo = await getInfoAsync(settingsFile);
@@ -231,20 +233,50 @@ export async function downloadMedia(
             encoding: EncodingType.Base64,
           });
 
-          savedToSaf = true;
+          saved = true;
           finalPath = safUri;
 
-          await deleteAsync(downloadedUri, { idempotent: true });
+          await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
         }
       }
     } catch (safErr) {
-      console.warn('SAF save failed, falling back to share sheet:', safErr);
+      console.warn('SAF save failed, proceeding to MediaLibrary:', safErr);
     }
 
-    if (!savedToSaf) {
+    // 2. Default: Save directly to Android/iOS Gallery (MediaLibrary)
+    if (!saved) {
+      try {
+        const perm = await MediaLibrary.requestPermissionsAsync();
+        if (perm.granted || perm.status === 'granted') {
+          const asset = await MediaLibrary.createAssetAsync(downloadedUri);
+          try {
+            const album = await MediaLibrary.getAlbumAsync('AnyFetch');
+            if (!album) {
+              await MediaLibrary.createAlbumAsync('AnyFetch', asset, false);
+            } else {
+              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+            }
+          } catch (albumErr) {
+            // Optional album grouping; asset is already in public DCIM/Gallery
+            console.log('AnyFetch album note:', albumErr);
+          }
+          saved = true;
+          finalPath = asset.uri;
+          // Delete temporary cache file once saved to MediaStore
+          await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
+        } else {
+          console.warn('MediaLibrary permission not granted');
+        }
+      } catch (mediaErr) {
+        console.warn('MediaLibrary save error, falling back to share sheet:', mediaErr);
+      }
+    }
+
+    // 3. Fallback: Share sheet only if gallery saving could not be completed
+    if (!saved) {
       const canShare = await Sharing.isAvailableAsync();
       if (!canShare) {
-        return { ok: false, error: 'Sharing not available on this device' };
+        return { ok: false, error: 'Could not save to gallery. Please check storage permissions.' };
       }
 
       await Sharing.shareAsync(downloadedUri, {

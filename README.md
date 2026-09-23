@@ -13,9 +13,8 @@
 
 <br/>
 
-<!-- Replace with your generated banner: assets/banner.png -->
 <p align="center">
-  <img src="assets/banner.png" alt="AnyFetch Banner" width="100%" style="border-radius: 12px;"/>
+  <img src="https://res.cloudinary.com/djaz6hcrl/image/upload/v1790190618/banner_zosxbu.png" alt="AnyFetch Banner" width="100%" style="border-radius: 12px;"/>
 </p>
 
 </div>
