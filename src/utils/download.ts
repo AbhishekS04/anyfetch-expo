@@ -31,15 +31,57 @@ export interface DownloadResult {
   error?: string;
 }
 
-/** Detect platform from pasted URL */
+/**
+ * Extracts the first valid HTTP/HTTPS URL from any string or clipboard text.
+ * Automatically cleans leading/trailing punctuation and social media share captions.
+ * Example: "Check out this reel https://www.instagram.com/reel/C8XYZ/?igsh=123 sent via app"
+ * -> "https://www.instagram.com/reel/C8XYZ/?igsh=123"
+ */
+export function extractUrlFromText(text: string): string {
+  if (!text) return '';
+  const trimmed = text.trim();
+  const match = trimmed.match(/https?:\/\/[^\s<>"'{}|\\^`[\]]+/i);
+  if (match) {
+    let clean = match[0];
+    clean = clean.replace(/[.,;:!?)]+$/, '');
+    return clean;
+  }
+  return trimmed;
+}
+
+/** Detect platform from pasted URL or freeform text containing a link */
 export function detectPlatform(
-  url: string,
+  rawText: string,
 ): 'instagram' | 'pinterest' | 'twitter' | null {
-  if (!url) return null;
-  if (/instagram\.com\/(p|reel|tv)\//.test(url)) return 'instagram';
-  if (/pinterest\.[a-z.]+\/pin\/\d+/.test(url) || /pin\.it\//.test(url)) return 'pinterest';
-  if (/(?:twitter|x)\.com\/[^/]+\/status(?:es)?\/\d+/.test(url) || /t\.co\//.test(url))
+  if (!rawText) return null;
+  const clean = extractUrlFromText(rawText).toLowerCase();
+  if (!clean) return null;
+
+  // Instagram: handles posts, reels (singular & plural), share URLs, stories, tv, instagr.am
+  if (
+    /(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv|share\/(?:reel|p))\//i.test(clean) ||
+    /(?:instagram\.com|instagr\.am)\/[^/]+\/(?:p|reel|reels)\//i.test(clean)
+  ) {
+    return 'instagram';
+  }
+
+  // Pinterest: handles pin.it and pinterest.* pins
+  if (
+    /pin\.it\/[A-Za-z0-9_-]+/i.test(clean) ||
+    /pinterest\.[a-z.]+\/pin\//i.test(clean) ||
+    /pinterest\.com\/pin\//i.test(clean)
+  ) {
+    return 'pinterest';
+  }
+
+  // Twitter / X: handles twitter.com, x.com, mobile.twitter.com, t.co, /i/status/, etc.
+  if (
+    /(?:twitter|x)\.com\/(?:[^/]+\/status(?:es)?\/\d+|i\/status\/\d+)/i.test(clean) ||
+    /t\.co\/[A-Za-z0-9_-]+/i.test(clean)
+  ) {
     return 'twitter';
+  }
+
   return null;
 }
 

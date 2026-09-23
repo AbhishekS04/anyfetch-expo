@@ -29,11 +29,18 @@ export interface TwExtractResult {
   text?: string;
 }
 
+import { extractUrlFromText } from '../utils/download';
+
 /** Parse tweet ID from a Twitter/X URL */
-export function parseTweetId(url: string): string {
-  const m = url.match(/(?:twitter|x)\.com\/[^/]+\/status(?:es)?\/(\d+)/);
-  if (!m) throw new Error('Not a recognised Twitter/X tweet URL');
-  return m[1];
+export function parseTweetId(rawInput: string): string {
+  const url = extractUrlFromText(rawInput);
+  const m = url.match(/(?:twitter|x)\.com\/(?:[^/]+\/status(?:es)?|i\/status)\/(\d+)/i);
+  if (m && m[1]) return m[1];
+
+  const mFallback = url.match(/\/status(?:es)?\/(\d+)/i);
+  if (mFallback && mFallback[1]) return mFallback[1];
+
+  throw new Error('Not a recognised Twitter/X tweet URL');
 }
 
 /**
@@ -57,89 +64,154 @@ function bestVariant(variants: any[]): { url: string; bitrate: number } | null {
   return { url: mp4[0].url, bitrate: mp4[0].bitrate ?? 0 };
 }
 
+async function tryFallbackTwitterApis(tweetId: string): Promise<TwExtractResult | null> {
+  // Try FxTwitter API
+  try {
+    const fxRes = await fetch(`https://api.fxtwitter.com/status/${tweetId}`, {
+      headers: { 'User-Agent': TW_UA, Accept: 'application/json' },
+    });
+    if (fxRes.ok) {
+      const fxData = await fxRes.json();
+      const tweet = fxData?.tweet;
+      const allMedia = tweet?.media?.all ?? [];
+      if (allMedia.length > 0) {
+        const items: TwMediaItem[] = allMedia.map((m: any) => ({
+          type: m.type === 'video' || m.type === 'gif' ? 'video' : 'image',
+          url: m.url,
+          thumbnail: m.thumbnail_url || m.url,
+        }));
+        return {
+          type: items.some(i => i.type === 'video') ? 'video' : 'image',
+          items,
+          author: tweet?.author?.name ?? '',
+          text: tweet?.text ?? '',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[Twitter] FxTwitter fallback failed:', err);
+  }
+
+  // Try VxTwitter API
+  try {
+    const vxRes = await fetch(`https://api.vxtwitter.com/Twitter/status/${tweetId}`, {
+      headers: { 'User-Agent': TW_UA, Accept: 'application/json' },
+    });
+    if (vxRes.ok) {
+      const vxData = await vxRes.json();
+      const mediaList = vxData?.media_extended ?? [];
+      if (mediaList.length > 0) {
+        const items: TwMediaItem[] = mediaList.map((m: any) => ({
+          type: m.type === 'video' || m.type === 'gif' ? 'video' : 'image',
+          url: m.url,
+          thumbnail: m.thumbnail_url || m.url,
+        }));
+        return {
+          type: items.some(i => i.type === 'video') ? 'video' : 'image',
+          items,
+          author: vxData?.user_name ?? '',
+          text: vxData?.text ?? '',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[Twitter] VxTwitter fallback failed:', err);
+  }
+
+  return null;
+}
+
 export async function extractTwitter(url: string): Promise<TwExtractResult> {
+  const cleanUrl = extractUrlFromText(url);
+
   // Step 1: Resolve t.co short links
-  let resolvedUrl = url;
-  if (url.includes('t.co/')) {
+  let resolvedUrl = cleanUrl;
+  if (cleanUrl.includes('t.co/')) {
     try {
-      const r = await fetch(url, { method: 'HEAD', redirect: 'follow' });
-      resolvedUrl = r.url || url;
+      const r = await fetch(cleanUrl, { method: 'HEAD', redirect: 'follow' });
+      resolvedUrl = r.url || cleanUrl;
     } catch {
-      const r = await fetch(url, { method: 'GET', redirect: 'follow' });
-      resolvedUrl = r.url || url;
+      const r = await fetch(cleanUrl, { method: 'GET', redirect: 'follow' });
+      resolvedUrl = r.url || cleanUrl;
     }
   }
 
   const tweetId = parseTweetId(resolvedUrl);
-  const token = makeSyndicationToken(tweetId);
-  const apiUrl =
-    `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&lang=en` +
-    `&features=tfw_timeline_list%3A%3Btfw_follower_count_sunset%3Atrue%3Btfw_tweet_edit_backend%3Aon%3Btfw_refsrc_session%3Aon%3Btfw_fosnr_soft_interventions_enabled%3Aon` +
-    `&token=${token}`;
 
-  const res = await fetch(apiUrl, {
-    headers: {
-      'User-Agent': TW_UA,
-      'Accept': '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': 'https://platform.twitter.com/',
-      'Origin': 'https://platform.twitter.com',
-    },
-  });
+  // 1. Try Twitter Syndication API
+  try {
+    const token = makeSyndicationToken(tweetId);
+    const apiUrl =
+      `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&lang=en` +
+      `&features=tfw_timeline_list%3A%3Btfw_follower_count_sunset%3Atrue%3Btfw_tweet_edit_backend%3Aon%3Btfw_refsrc_session%3Aon%3Btfw_fosnr_soft_interventions_enabled%3Aon` +
+      `&token=${token}`;
 
-  if (!res.ok) {
-    throw new Error(
-      `Twitter Syndication API returned HTTP ${res.status}. The tweet may be private, deleted, or the token formula may need updating.`,
-    );
-  }
+    const res = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': TW_UA,
+        Accept: '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        Referer: 'https://platform.twitter.com/',
+        Origin: 'https://platform.twitter.com',
+      },
+    });
 
-  const data = await res.json().catch(() => null);
-  if (!data) throw new Error('Twitter: failed to parse API response');
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data) {
+        const author: string = data.user?.name ?? data.user?.screen_name ?? '';
+        const text: string = data.text ?? '';
+        const mediaEntities: any[] =
+          data.mediaDetails ??
+          data.extended_entities?.media ??
+          data.entities?.media ??
+          [];
 
-  const author: string = data.user?.name ?? data.user?.screen_name ?? '';
-  const text: string = data.text ?? '';
+        const items: TwMediaItem[] = [];
+        for (const media of mediaEntities) {
+          if (media.type === 'video' || media.type === 'animated_gif') {
+            const videoInfo = media.video_info ?? media.videoInfo;
+            const variants: any[] = videoInfo?.variants ?? [];
+            const best = bestVariant(variants);
+            if (best) {
+              items.push({
+                type: 'video',
+                url: best.url,
+                thumbnail: media.media_url_https ?? media.media_url,
+                bitrate: best.bitrate,
+              });
+            }
+          } else if (media.type === 'photo') {
+            const imgUrl =
+              (media.media_url_https ?? media.media_url ?? '') + '?format=jpg&name=orig';
+            items.push({
+              type: 'image',
+              url: imgUrl,
+              thumbnail: media.media_url_https ?? media.media_url,
+            });
+          }
+        }
 
-  const mediaEntities: any[] =
-    data.mediaDetails ??
-    data.extended_entities?.media ??
-    data.entities?.media ??
-    [];
-
-  const items: TwMediaItem[] = [];
-
-  for (const media of mediaEntities) {
-    if (media.type === 'video' || media.type === 'animated_gif') {
-      const videoInfo = media.video_info ?? media.videoInfo;
-      const variants: any[] = videoInfo?.variants ?? [];
-      const best = bestVariant(variants);
-      if (best) {
-        items.push({
-          type: 'video',
-          url: best.url,
-          thumbnail: media.media_url_https ?? media.media_url,
-          bitrate: best.bitrate,
-        });
+        if (items.length > 0) {
+          const hasVideo = items.some(i => i.type === 'video');
+          const isGif = mediaEntities[0]?.type === 'animated_gif';
+          return {
+            type: hasVideo ? (isGif ? 'gif' : 'video') : 'image',
+            items,
+            author,
+            text,
+          };
+        }
       }
-    } else if (media.type === 'photo') {
-      const imgUrl =
-        (media.media_url_https ?? media.media_url ?? '') + '?format=jpg&name=orig';
-      items.push({
-        type: 'image',
-        url: imgUrl,
-        thumbnail: media.media_url_https ?? media.media_url,
-      });
     }
+  } catch (err) {
+    console.warn('[Twitter] Syndication API failed, falling back:', err);
   }
 
-  if (items.length > 0) {
-    const hasVideo = items.some(i => i.type === 'video');
-    const isGif = mediaEntities[0]?.type === 'animated_gif';
-    return {
-      type: hasVideo ? (isGif ? 'gif' : 'video') : 'image',
-      items,
-      author,
-      text,
-    };
+  // 2. Try Fallback APIs
+  const fallbackResult = await tryFallbackTwitterApis(tweetId);
+  if (fallbackResult) {
+    return fallbackResult;
   }
 
   throw new Error(

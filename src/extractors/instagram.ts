@@ -27,10 +27,17 @@ export interface IgExtractResult {
   caption?: string;
 }
 
-export function parseShortcode(url: string): string {
-  const m = url.match(/instagram\.com\/(?:p|reel|tv|reels)\/([A-Za-z0-9_-]+)/);
-  if (!m) throw new Error('Not a recognised Instagram post/reel URL');
-  return m[1];
+import { extractUrlFromText } from '../utils/download';
+
+export function parseShortcode(rawInput: string): string {
+  const url = extractUrlFromText(rawInput);
+  const m = url.match(/(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv|share\/(?:reel|p))\/([A-Za-z0-9_-]+)/i);
+  if (m && m[1]) return m[1];
+
+  const mFallback = url.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  if (mFallback && mFallback[1]) return mFallback[1];
+
+  throw new Error('Not a recognised Instagram post/reel URL');
 }
 
 function getSetCookieString(res: Response): { csrfToken: string; cookieStr: string } {
@@ -471,16 +478,51 @@ async function tryMobileApi(shortcode: string): Promise<IgExtractResult | null> 
 
 export async function extractInstagram(url: string): Promise<IgExtractResult> {
   const shortcode = parseShortcode(url);
-  const { csrfToken, cookieStr } = await bootstrapSession();
 
-  const htmlDirect = await tryHtmlEmbed(shortcode);
-  if (htmlDirect) return htmlDirect;
+  // 1. Try Embed HTML parsing first (fastest and doesn't require session)
+  try {
+    const htmlDirect = await tryHtmlEmbed(shortcode);
+    if (htmlDirect) return htmlDirect;
+  } catch (err) {
+    console.warn('[Instagram] tryHtmlEmbed error:', err);
+  }
 
-  const gql = await tryGraphQL(shortcode, csrfToken, cookieStr);
-  if (gql) return gql;
+  // 2. Try GraphQL with bootstrapped session
+  try {
+    const { csrfToken, cookieStr } = await bootstrapSession();
+    const gql = await tryGraphQL(shortcode, csrfToken, cookieStr);
+    if (gql) return gql;
+  } catch (err) {
+    console.warn('[Instagram] tryGraphQL/bootstrap error:', err);
+  }
 
-  const mobile = await tryMobileApi(shortcode);
-  if (mobile) return mobile;
+  // 3. Try Mobile oEmbed info API
+  try {
+    const mobile = await tryMobileApi(shortcode);
+    if (mobile) return mobile;
+  } catch (err) {
+    console.warn('[Instagram] tryMobileApi error:', err);
+  }
+
+  // 4. Try Direct info endpoint fallback (?__a=1&__d=dis)
+  try {
+    const directRes = await fetch(`${IG_BASE}/p/${shortcode}/?__a=1&__d=dis`, {
+      headers: {
+        'User-Agent': IG_UA,
+        Accept: 'application/json',
+      },
+    });
+    if (directRes.ok) {
+      const directJson = await directRes.json().catch(() => null);
+      const media = directJson?.graphql?.shortcode_media ?? directJson?.items?.[0];
+      if (media) {
+        const parsed = parseGraphQLMedia(media);
+        if (parsed) return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('[Instagram] direct info error:', err);
+  }
 
   throw new Error('Instagram could not fetch this post. It may be private, rate-limited, or unavailable.');
 }

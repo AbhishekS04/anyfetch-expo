@@ -16,20 +16,23 @@ export interface PtExtractResult {
   hlsNote?: string;
 }
 
-export function parsePinId(url: string): string {
-  const m = url.match(/\/pin\/(\d+)/);
-  if (!m) throw new Error('Not a recognised Pinterest pin URL');
-  return m[1];
+import { extractUrlFromText } from '../utils/download';
+
+export function parsePinId(rawInput: string): string {
+  const url = extractUrlFromText(rawInput);
+  const m = url.match(/\/pin\/(\d+)/i);
+  if (m && m[1]) return m[1];
+  throw new Error('Not a recognised Pinterest pin URL');
 }
 
 export async function extractPinterest(url: string): Promise<PtExtractResult> {
-  let activeUrl = url;
-  if (url.includes('pin.it')) {
+  let activeUrl = extractUrlFromText(url);
+  if (activeUrl.includes('pin.it')) {
     try {
-      const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+      const res = await fetch(activeUrl, { method: 'HEAD', redirect: 'follow' });
       if (res.url) activeUrl = res.url;
     } catch (err) {
-      const res = await fetch(url, { method: 'GET', redirect: 'follow' });
+      const res = await fetch(activeUrl, { method: 'GET', redirect: 'follow' });
       if (res.url) activeUrl = res.url;
     }
   }

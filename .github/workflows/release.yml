@@ -1,0 +1,96 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (leave empty to use app.json version)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install NPM Dependencies
+        run: npm ci || npm install
+
+      - name: Determine Version Tag
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            APP_VERSION=$(node -p "require('./app.json').expo.version")
+            TAG="v${APP_VERSION}"
+          fi
+          echo "VERSION_TAG=${TAG}" >> $GITHUB_ENV
+          echo "Version tag determined as: ${TAG}"
+
+      - name: Ensure Android Native Project
+        run: |
+          if [ ! -d "android" ]; then
+            echo "Prebuilding Android native folder..."
+            npx expo prebuild --platform android --no-install
+          fi
+          chmod +x android/gradlew
+
+      - name: Build Release APK with Gradle
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon
+          cd ..
+
+      - name: Prepare Release Artifact
+        run: |
+          mkdir -p release-artifacts
+          OUTPUT_APK="android/app/build/outputs/apk/release/app-release.apk"
+          if [ -f "$OUTPUT_APK" ]; then
+            TARGET_NAME="anyfetch-${VERSION_TAG}.apk"
+            cp "$OUTPUT_APK" "release-artifacts/${TARGET_NAME}"
+            echo "Copied $OUTPUT_APK to release-artifacts/${TARGET_NAME}"
+            ls -lh release-artifacts/
+          else
+            echo "Error: Output APK not found at $OUTPUT_APK"
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION_TAG }}
+          name: Anyfetch ${{ env.VERSION_TAG }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: release-artifacts/anyfetch-*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

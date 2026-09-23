@@ -28,11 +28,19 @@ import {
 } from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import appJson from '../../app.json';
+import { checkForGitHubUpdate, GitHubReleaseInfo } from '../services/githubUpdate';
+import UpdateModal from '../components/UpdateModal';
 
 const SETTINGS_FILE = (documentDirectory ?? '') + 'settings.json';
 
 export default function SettingsScreen() {
   const { currentlyRunning } = Updates.useUpdates();
+
+  // GitHub in-app APK updater state
+  const [ghRelease, setGhRelease] = useState<GitHubReleaseInfo | null>(null);
+  const [ghCheckPhase, setGhCheckPhase] = useState<'idle' | 'checking' | 'uptodate' | 'available' | 'error'>('idle');
+  const [ghCheckError, setGhCheckError] = useState<string | null>(null);
+  const [ghModalVisible, setGhModalVisible] = useState(false);
 
   const isUpdatesSupported = Updates.isEnabled;
 
@@ -99,6 +107,27 @@ export default function SettingsScreen() {
           : 'Update failed. Tap Retry to try again.'
       );
       setUpdatePhase('error');
+    }
+  };
+
+  /**
+   * Check for full APK releases on GitHub
+   */
+  const handleCheckGitHubRelease = async () => {
+    setGhCheckPhase('checking');
+    setGhCheckError(null);
+    try {
+      const info = await checkForGitHubUpdate();
+      setGhRelease(info);
+      if (info.isAvailable) {
+        setGhCheckPhase('available');
+        setGhModalVisible(true);
+      } else {
+        setGhCheckPhase('uptodate');
+      }
+    } catch (err: any) {
+      setGhCheckError(err?.message || 'Could not fetch GitHub releases.');
+      setGhCheckPhase('error');
     }
   };
 
@@ -313,15 +342,87 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* GitHub Releases In-App APK Updates */}
+      <Text style={[s.section, s.mt]}>GITHUB APK RELEASES</Text>
+      <View style={s.card}>
+        <Row label="Current Version" value={`v${runningVersion}`} />
+        <Sep />
+        <Row
+          label="Latest on GitHub"
+          value={ghRelease ? `v${ghRelease.latestVersion}` : 'Not checked'}
+        />
+        <Sep />
+        <View style={s.updatesContainer}>
+          {ghCheckPhase === 'checking' ? (
+            <Text style={s.updateStatusText}>Checking GitHub for new releases…</Text>
+          ) : ghCheckPhase === 'available' && ghRelease ? (
+            <Text style={s.updateAvailableText}>
+              New version v{ghRelease.latestVersion} is available!
+            </Text>
+          ) : ghCheckPhase === 'uptodate' ? (
+            <Text style={s.updateStatusText}>You are running the latest GitHub release.</Text>
+          ) : ghCheckPhase === 'error' && ghCheckError ? (
+            <Text style={s.updateErrText}>{ghCheckError}</Text>
+          ) : (
+            <Text style={s.sub}>
+              Download and install new full APK builds directly inside the app without leaving.
+            </Text>
+          )}
+
+          <Pressable
+            style={[
+              s.updateBtn,
+              ghCheckPhase === 'checking' && s.updateBtnBusy,
+              ghCheckPhase === 'uptodate' && s.updateBtnUpToDate,
+              ghCheckPhase === 'error' && s.updateBtnError,
+            ]}
+            disabled={ghCheckPhase === 'checking'}
+            onPress={
+              ghCheckPhase === 'available'
+                ? () => setGhModalVisible(true)
+                : handleCheckGitHubRelease
+            }>
+            {ghCheckPhase === 'checking' ? (
+              <View style={s.updateBtnInner}>
+                <ActivityIndicator size="small" color="#000000" />
+                <Text style={s.updateBtnText}>Checking GitHub…</Text>
+              </View>
+            ) : (
+              <Text
+                style={[
+                  s.updateBtnText,
+                  ghCheckPhase === 'uptodate' && s.updateBtnUpToDateText,
+                  ghCheckPhase === 'error' && s.updateBtnErrorText,
+                ]}>
+                {ghCheckPhase === 'available'
+                  ? 'Install Update Now'
+                  : ghCheckPhase === 'uptodate'
+                  ? 'Up to Date  ✓'
+                  : ghCheckPhase === 'error'
+                  ? 'Retry GitHub Check'
+                  : 'Check for APK Release'}
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
       <Pressable
         style={s.ghBtn}
-        onPress={() => Linking.openURL('https://github.com/AbhishekS04/anyfetch').catch(() => {})}>
+        onPress={() => Linking.openURL('https://github.com/AbhishekS04/anyfetch-expo').catch(() => {})}>
         <Text style={s.ghBtnText}>View on GitHub →</Text>
       </Pressable>
 
       <Text style={s.footer}>
         anyfetch runs 100% locally on your device. Emojis and files are parsed and extracted locally. No servers. No tracing.
       </Text>
+
+      {/* In-app APK Update Modal */}
+      <UpdateModal
+        visible={ghModalVisible}
+        releaseInfo={ghRelease}
+        onDismiss={() => setGhModalVisible(false)}
+      />
     </ScrollView>
   );
 }
@@ -398,6 +499,12 @@ const s = StyleSheet.create({
   updateStatusText: {
     color: '#8E8E93',
     fontSize: 13,
+    lineHeight: 18,
+  },
+  updateAvailableText: {
+    color: '#34C759',
+    fontSize: 13,
+    fontWeight: '600',
     lineHeight: 18,
   },
   updateErrText: {

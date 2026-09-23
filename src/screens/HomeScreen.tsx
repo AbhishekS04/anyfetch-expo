@@ -47,7 +47,9 @@ import { useEvent } from 'expo';
 import { extractInstagram, IgExtractResult, IgMediaItem } from '../extractors/instagram';
 import { extractPinterest, PtExtractResult } from '../extractors/pinterest';
 import { extractTwitter, TwExtractResult } from '../extractors/twitter';
-import { detectPlatform, downloadMedia, DownloadProgress } from '../utils/download';
+import { detectPlatform, downloadMedia, DownloadProgress, extractUrlFromText } from '../utils/download';
+import { checkForGitHubUpdate, GitHubReleaseInfo } from '../services/githubUpdate';
+import UpdateModal from '../components/UpdateModal';
 
 const { width: W, height: H } = Dimensions.get('window');
 // Persistent file path for recent download history (no native module needed)
@@ -119,6 +121,26 @@ export default function HomeScreen() {
   const buttonColorAnim = useRef(new Animated.Value(0)).current;
 
 
+
+  // ── GitHub Releases In-App APK Updater state ──────────────────────
+  const [githubRelease, setGithubRelease] = useState<GitHubReleaseInfo | null>(null);
+  const [updateModalVisible, setUpdateModalVisible] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const release = await checkForGitHubUpdate();
+        if (mounted && release.isAvailable) {
+          setGithubRelease(release);
+          setUpdateModalVisible(true);
+        }
+      } catch (err) {
+        console.warn('[GitHub Updater] Auto-check error:', err);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // History filter chip
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
@@ -398,9 +420,10 @@ export default function HomeScreen() {
     try {
       const text = await Clipboard.getStringAsync();
       if (!text?.trim()) return;
-      const p = detectPlatform(text.trim());
-      if (p && text.trim() !== urlInputRef.current) {
-        setUrlInput(text.trim());
+      const cleanUrl = extractUrlFromText(text.trim());
+      const p = detectPlatform(cleanUrl);
+      if (p && cleanUrl !== urlInputRef.current) {
+        setUrlInput(cleanUrl);
       }
     } catch {
       /* ignore */
@@ -415,7 +438,8 @@ export default function HomeScreen() {
 
   // ── Extract ──────────────────────────────────────────────────────────────
   const handleExtract = useCallback(async (overrideUrl?: string) => {
-    const activeUrl = (overrideUrl ?? urlInputRef.current).trim();
+    const raw = (overrideUrl ?? urlInputRef.current).trim();
+    const activeUrl = extractUrlFromText(raw);
     const activePlatform = detectPlatform(activeUrl);
 
     if (!activeUrl || !activePlatform) {
@@ -584,19 +608,20 @@ export default function HomeScreen() {
   const handleCirclePress = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const text = (await Clipboard.getStringAsync())?.trim();
-      const isNewLinkValid = text && detectPlatform(text);
+      const rawText = (await Clipboard.getStringAsync())?.trim();
+      const cleanUrl = extractUrlFromText(rawText);
+      const isNewLinkValid = cleanUrl && detectPlatform(cleanUrl);
 
-      if (isNewLinkValid && text !== urlInputRef.current) {
+      if (isNewLinkValid && cleanUrl !== urlInputRef.current) {
         // If there's a new valid link in the clipboard, update state and extract it
-        setUrlInput(text);
-        handleExtract(text);
+        setUrlInput(cleanUrl);
+        handleExtract(cleanUrl);
       } else if (urlInputRef.current && detectPlatform(urlInputRef.current)) {
         // No new link on clipboard, but current text in input is valid
         handleExtract(urlInputRef.current);
       } else if (isNewLinkValid) {
         // Clipboard link is valid but matches current input, just extract it
-        handleExtract(text);
+        handleExtract(cleanUrl);
       } else {
         Alert.alert('No valid link', 'Copy any supported link first.');
       }
@@ -756,7 +781,10 @@ export default function HomeScreen() {
                   placeholder="Paste Instagram, Pinterest, or Twitter/X link..."
                   placeholderTextColor="#5E5E62"
                   value={urlInput}
-                  onChangeText={setUrlInput}
+                  onChangeText={(val) => {
+                    const clean = extractUrlFromText(val);
+                    setUrlInput(clean || val);
+                  }}
                   editable={!isLoading}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -771,7 +799,10 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     onPress={async () => {
                       const t = (await Clipboard.getStringAsync())?.trim();
-                      if (t) setUrlInput(t);
+                      if (t) {
+                        const clean = extractUrlFromText(t);
+                        setUrlInput(clean || t);
+                      }
                     }}
                     hitSlop={12}
                     style={s.pasteBadge}>
@@ -1218,6 +1249,13 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* GitHub Releases In-App APK Updater Modal */}
+      <UpdateModal
+        visible={updateModalVisible}
+        releaseInfo={githubRelease}
+        onDismiss={() => setUpdateModalVisible(false)}
+      />
     </View>
   );
 }
