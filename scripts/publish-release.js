@@ -71,10 +71,15 @@ try {
       cwd: rootDir,
       stdio: 'inherit',
     });
+    console.log(`[Info] Ensuring release ${versionTag} is published (draft=false) and marked latest...`);
+    execSync(`gh release edit "${versionTag}" --draft=false --latest`, {
+      cwd: rootDir,
+      stdio: 'inherit',
+    });
   } else {
     console.log(`[Info] Creating new GitHub Release ${versionTag}...`);
     execSync(
-      `gh release create "${versionTag}" "${apkPath}" --title "Anyfetch ${versionTag}" --generate-notes`,
+      `gh release create "${versionTag}" "${apkPath}" --title "AnyFetch ${versionTag}" --generate-notes --latest`,
       { cwd: rootDir, stdio: 'inherit' }
     );
   }
