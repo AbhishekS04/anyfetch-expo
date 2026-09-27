@@ -16,10 +16,12 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Dimensions,
   Easing,
   FlatList,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -120,7 +122,30 @@ export default function HomeScreen() {
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const buttonColorAnim = useRef(new Animated.Value(0)).current;
 
+  // ── Clipboard auto-detect banner state ──────────────────────────────
+  const [detectedClipboardUrl, setDetectedClipboardUrl] = useState<string | null>(null);
+  const lastDismissedClipboardRef = useRef<string>('');
+  const clipboardAnim = useRef(new Animated.Value(0)).current;
 
+  const showClipboardBanner = useCallback((url: string) => {
+    setDetectedClipboardUrl(url);
+    Animated.spring(clipboardAnim, {
+      toValue: 1,
+      tension: 60,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [clipboardAnim]);
+
+  const hideClipboardBanner = useCallback(() => {
+    Animated.timing(clipboardAnim, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => {
+      setDetectedClipboardUrl(null);
+    });
+  }, [clipboardAnim]);
 
   // ── GitHub Releases In-App APK Updater state ──────────────────────
   const [githubRelease, setGithubRelease] = useState<GitHubReleaseInfo | null>(null);
@@ -180,24 +205,58 @@ export default function HomeScreen() {
 
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const transitionToPhase = useCallback((newPhase: AppPhase, updateState?: () => void) => {
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 250,
-      easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-      useNativeDriver: true,
-    }).start(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 160,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 12,
+        duration: 160,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.96,
+        duration: 160,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
       if (updateState) updateState();
       setPhase(newPhase);
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 300,
-        easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-        useNativeDriver: true,
-      }).start();
+
+      slideAnim.setValue(-12);
+      scaleAnim.setValue(0.97);
+
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          tension: 70,
+          friction: 9,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 70,
+          friction: 9,
+          useNativeDriver: true,
+        }),
+      ]).start();
     });
-  }, [fadeAnim]);
+  }, [fadeAnim, slideAnim, scaleAnim]);
 
   // Use a ref so circle button always has the latest urlInput without stale closure
   const urlInputRef = useRef('');
@@ -206,6 +265,7 @@ export default function HomeScreen() {
   }, [urlInput]);
 
   const platform = detectPlatform(urlInput);
+  const detectedPlatform = detectedClipboardUrl ? detectPlatform(detectedClipboardUrl) : null;
 
   // ── Colors based on active platform ──────────────────────────────────────
   const getPlatformColors = () => {
@@ -422,13 +482,19 @@ export default function HomeScreen() {
       if (!text?.trim()) return;
       const cleanUrl = extractUrlFromText(text.trim());
       const p = detectPlatform(cleanUrl);
-      if (p && cleanUrl !== urlInputRef.current) {
-        setUrlInput(cleanUrl);
+      if (
+        p &&
+        cleanUrl !== urlInputRef.current &&
+        cleanUrl !== lastDismissedClipboardRef.current &&
+        cleanUrl !== detectedClipboardUrl
+      ) {
+        showClipboardBanner(cleanUrl);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [detectedClipboardUrl, showClipboardBanner]);
 
   useFocusEffect(
     useCallback(() => {
@@ -436,8 +502,20 @@ export default function HomeScreen() {
     }, [checkClipboard])
   );
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        checkClipboard();
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [checkClipboard]);
+
   // ── Extract ──────────────────────────────────────────────────────────────
   const handleExtract = useCallback(async (overrideUrl?: string) => {
+    hideClipboardBanner();
     const raw = (overrideUrl ?? urlInputRef.current).trim();
     const activeUrl = extractUrlFromText(raw);
     const activePlatform = detectPlatform(activeUrl);
@@ -508,7 +586,45 @@ export default function HomeScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       transitionToPhase('error', () => { setErrorMsg(e?.message ?? 'Something went wrong'); });
     }
-  }, [transitionToPhase]);
+  }, [hideClipboardBanner, transitionToPhase]);
+
+  // ── Deep Linking / Shared Intent Receiver ──────────────────────────────────
+  useEffect(() => {
+    const handleUrl = (event: { url: string }) => {
+      const url = event.url;
+      if (!url) return;
+      try {
+        let extractedText = url;
+        if (url.startsWith('anyfetch://share?text=')) {
+          const raw = url.replace('anyfetch://share?text=', '');
+          extractedText = decodeURIComponent(raw);
+        } else if (url.includes('?text=')) {
+          const parts = url.split('?text=');
+          if (parts[1]) extractedText = decodeURIComponent(parts[1]);
+        }
+        const cleanUrl = extractUrlFromText(extractedText);
+        if (cleanUrl && detectPlatform(cleanUrl)) {
+          hideClipboardBanner();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setUrlInput(cleanUrl);
+          handleExtract(cleanUrl);
+        }
+      } catch (err) {
+        console.warn('[Linking] Failed to parse incoming URL:', err);
+      }
+    };
+
+    Linking.getInitialURL().then((initialUrl) => {
+      if (initialUrl) {
+        handleUrl({ url: initialUrl });
+      }
+    });
+
+    const sub = Linking.addEventListener('url', handleUrl);
+    return () => {
+      sub.remove();
+    };
+  }, [handleExtract, hideClipboardBanner]);
 
   // ── Download ─────────────────────────────────────────────────────────────
   const doDownload = useCallback(async (url: string, type: 'video' | 'image' | 'audio') => {
@@ -604,36 +720,34 @@ export default function HomeScreen() {
     });
   }, [transitionToPhase, controlsOpacity]);
 
-  // ── Circle button handler — reads from ref ───────────────────────────────
+  // ── Circle button handler — reads from clipboard / ref ────────────────────
   const handleCirclePress = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (detectedClipboardUrl) hideClipboardBanner();
     try {
       const rawText = (await Clipboard.getStringAsync())?.trim();
       const cleanUrl = extractUrlFromText(rawText);
       const isNewLinkValid = cleanUrl && detectPlatform(cleanUrl);
 
-      if (isNewLinkValid && cleanUrl !== urlInputRef.current) {
-        // If there's a new valid link in the clipboard, update state and extract it
+      if (isNewLinkValid) {
         setUrlInput(cleanUrl);
         handleExtract(cleanUrl);
       } else if (urlInputRef.current && detectPlatform(urlInputRef.current)) {
-        // No new link on clipboard, but current text in input is valid
         handleExtract(urlInputRef.current);
-      } else if (isNewLinkValid) {
-        // Clipboard link is valid but matches current input, just extract it
-        handleExtract(cleanUrl);
+      } else if (cleanUrl) {
+        setUrlInput(cleanUrl);
+        Alert.alert('Unsupported Link', 'Please copy an Instagram, Pinterest, or Twitter/X link.');
       } else {
-        Alert.alert('No valid link', 'Copy any supported link first.');
+        Alert.alert('No Link Copied', 'Copy an Instagram, Pinterest, or Twitter/X link, then tap the circle to download.');
       }
     } catch {
-      // Fallback
       if (urlInputRef.current && detectPlatform(urlInputRef.current)) {
         handleExtract(urlInputRef.current);
       } else {
-        Alert.alert('No valid link', 'Copy any supported link first.');
+        Alert.alert('No Link Copied', 'Copy an Instagram, Pinterest, or Twitter/X link, then tap the circle to download.');
       }
     }
-  }, [handleExtract]);
+  }, [detectedClipboardUrl, handleExtract, hideClipboardBanner]);
 
   // ── Render Helpers ───────────────────────────────────────────────────────
   const isIdle = phase === 'idle' || phase === 'error';
@@ -670,7 +784,17 @@ export default function HomeScreen() {
         {isResult && <View style={s.headerRightDummy} />}
       </View>
 
-      <Animated.View style={[s.mainWrapper, { opacity: fadeAnim }]}>
+      <Animated.View
+        style={[
+          s.mainWrapper,
+          {
+            opacity: fadeAnim,
+            transform: [
+              { translateY: slideAnim },
+              { scale: scaleAnim },
+            ],
+          },
+        ]}>
         {/* ═══ IDLE / INPUT PHASE ═══ */}
         {(isIdle || isLoading) && (
           <ScrollView
@@ -761,6 +885,92 @@ export default function HomeScreen() {
 
             {/* Input Box Card */}
             <View style={s.inputContainer}>
+              {detectedClipboardUrl && phase === 'idle' && (
+                <Animated.View
+                  style={[
+                    s.clipboardBanner,
+                    {
+                      opacity: clipboardAnim,
+                      transform: [
+                        {
+                          translateY: clipboardAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [-8, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}>
+                  <View style={s.clipboardBannerLeft}>
+                    <Ionicons
+                      name={
+                        detectedPlatform === 'instagram'
+                          ? 'logo-instagram'
+                          : detectedPlatform === 'pinterest'
+                            ? 'logo-pinterest'
+                            : detectedPlatform === 'twitter'
+                              ? 'logo-twitter'
+                              : 'link-outline'
+                      }
+                      size={18}
+                      color={
+                        detectedPlatform === 'instagram'
+                          ? '#E1306C'
+                          : detectedPlatform === 'pinterest'
+                            ? '#E60023'
+                            : detectedPlatform === 'twitter'
+                              ? '#1D9BF0'
+                              : '#FF9F0A'
+                      }
+                    />
+                    <View style={{ marginLeft: 10, flex: 1 }}>
+                      <Text style={s.clipboardBannerTitle}>
+                        {detectedPlatform
+                          ? `${detectedPlatform.charAt(0).toUpperCase() + detectedPlatform.slice(1)} link in clipboard`
+                          : 'Copied link detected'}
+                      </Text>
+                      <Text numberOfLines={1} style={s.clipboardBannerSubtitle}>
+                        {detectedClipboardUrl}
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      s.clipboardFetchBtn,
+                      {
+                        backgroundColor:
+                          detectedPlatform === 'instagram'
+                            ? '#E1306C'
+                            : detectedPlatform === 'pinterest'
+                              ? '#E60023'
+                              : detectedPlatform === 'twitter'
+                                ? '#1D9BF0'
+                                : '#FF9F0A',
+                      },
+                    ]}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      const urlToFetch = detectedClipboardUrl;
+                      hideClipboardBanner();
+                      setUrlInput(urlToFetch);
+                      handleExtract(urlToFetch);
+                    }}>
+                    <Ionicons name="flash" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={s.clipboardFetchBtnTxt}>Fetch</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      lastDismissedClipboardRef.current = detectedClipboardUrl;
+                      hideClipboardBanner();
+                    }}
+                    hitSlop={10}
+                    style={{ marginLeft: 8, padding: 4 }}>
+                    <Ionicons name="close" size={18} color="#8E8E93" />
+                  </TouchableOpacity>
+                </Animated.View>
+              )}
+
               <View style={s.inputCard}>
                 <Ionicons
                   name={
@@ -784,6 +994,7 @@ export default function HomeScreen() {
                   onChangeText={(val) => {
                     const clean = extractUrlFromText(val);
                     setUrlInput(clean || val);
+                    if (detectedClipboardUrl) hideClipboardBanner();
                   }}
                   editable={!isLoading}
                   autoCapitalize="none"
@@ -791,23 +1002,14 @@ export default function HomeScreen() {
                   returnKeyType="go"
                   onSubmitEditing={() => handleExtract(urlInput)}
                 />
-                {urlInput.length > 0 ? (
-                  <TouchableOpacity onPress={() => setUrlInput('')} hitSlop={12}>
-                    <Ionicons name="close-circle" size={20} color="#5E5E62" />
-                  </TouchableOpacity>
-                ) : (
+                {urlInput.length > 0 && (
                   <TouchableOpacity
-                    onPress={async () => {
-                      const t = (await Clipboard.getStringAsync())?.trim();
-                      if (t) {
-                        const clean = extractUrlFromText(t);
-                        setUrlInput(clean || t);
-                      }
+                    onPress={() => {
+                      setUrlInput('');
+                      if (detectedClipboardUrl) hideClipboardBanner();
                     }}
-                    hitSlop={12}
-                    style={s.pasteBadge}>
-                    <Ionicons name="clipboard-outline" size={16} color="#8E8E93" />
-                    <Text style={s.pasteBadgeTxt}>PASTE</Text>
+                    hitSlop={12}>
+                    <Ionicons name="close-circle" size={20} color="#5E5E62" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -1484,6 +1686,51 @@ const s = StyleSheet.create({
   inputContainer: {
     width: '100%',
     gap: 12,
+  },
+  clipboardBanner: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(28, 28, 30, 0.95)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  clipboardBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  clipboardBannerTitle: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  clipboardBannerSubtitle: {
+    color: '#8E8E93',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  clipboardFetchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  clipboardFetchBtnTxt: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   inputCard: {
     width: '100%',

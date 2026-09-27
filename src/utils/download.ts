@@ -17,7 +17,6 @@ import {
 } from 'expo-file-system/legacy';
 import { EncodingType } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 
 export interface DownloadProgress {
@@ -58,9 +57,10 @@ export function detectPlatform(
   const clean = extractUrlFromText(rawText).toLowerCase();
   if (!clean) return null;
 
-  // Instagram: handles posts, reels (singular & plural), share URLs, stories, tv, instagr.am
+  // Instagram: posts, reels (singular & plural), share URLs (incl. ?stkn= new format), tv, instagr.am
   if (
-    /(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv|share\/(?:reel|p))\//i.test(clean) ||
+    /(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv)\//i.test(clean) ||
+    /(?:instagram\.com|instagr\.am)\/share\//i.test(clean) ||
     /(?:instagram\.com|instagr\.am)\/[^/]+\/(?:p|reel|reels)\//i.test(clean)
   ) {
     return 'instagram';
@@ -159,11 +159,34 @@ function buildHeaders(url: string, variant: 'bare' | 'browser' | 'android'): Rec
  * Works reliably in Expo Go on Android.
  */
 export async function downloadMedia(
-  cdnUrl: string,
+  rawCdnUrl: string,
   mediaType: 'video' | 'image' | 'audio',
   onProgress?: (p: DownloadProgress) => void,
 ): Promise<DownloadResult> {
   try {
+    let cdnUrl = rawCdnUrl;
+    if (cdnUrl.includes('token=')) {
+      try {
+        const token = cdnUrl.split('token=')[1]?.split('&')[0];
+        if (token) {
+          const parts = token.split('.');
+          if (parts.length >= 2) {
+            let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            while (b64.length % 4 !== 0) b64 += '=';
+            const decodedStr = typeof atob === 'function' ? atob(b64) : '';
+            if (decodedStr) {
+              const parsed = JSON.parse(decodedStr);
+              if (parsed?.url) {
+                cdnUrl = parsed.url;
+              }
+            }
+          }
+        }
+      } catch {
+        /* continue with cdnUrl */
+      }
+    }
+
     const filename = makeFilename(cdnUrl, mediaType);
     const cacheRoot = cacheDirectory ?? documentDirectory;
     if (!cacheRoot) {
@@ -246,26 +269,36 @@ export async function downloadMedia(
     // 2. Default: Save directly to Android/iOS Gallery (MediaLibrary)
     if (!saved) {
       try {
-        const perm = await MediaLibrary.requestPermissionsAsync();
-        if (perm.granted || perm.status === 'granted') {
-          const asset = await MediaLibrary.createAssetAsync(downloadedUri);
-          try {
-            const album = await MediaLibrary.getAlbumAsync('AnyFetch');
-            if (!album) {
-              await MediaLibrary.createAlbumAsync('AnyFetch', asset, false);
-            } else {
-              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+        let MediaLib: any = null;
+        try {
+          // Dynamic require prevents crash in Expo Go or runtimes without ExpoMediaLibraryNext
+          MediaLib = require('expo-media-library');
+        } catch (loadErr) {
+          console.warn('[MediaLibrary] Native module not present in current runtime (e.g. Expo Go):', loadErr);
+        }
+
+        if (MediaLib && typeof MediaLib.requestPermissionsAsync === 'function') {
+          const perm = await MediaLib.requestPermissionsAsync();
+          if (perm.granted || perm.status === 'granted') {
+            const asset = await MediaLib.createAssetAsync(downloadedUri);
+            try {
+              const album = await MediaLib.getAlbumAsync('AnyFetch');
+              if (!album) {
+                await MediaLib.createAlbumAsync('AnyFetch', asset, false);
+              } else {
+                await MediaLib.addAssetsToAlbumAsync([asset], album, false);
+              }
+            } catch (albumErr) {
+              // Optional album grouping; asset is already in public DCIM/Gallery
+              console.log('AnyFetch album note:', albumErr);
             }
-          } catch (albumErr) {
-            // Optional album grouping; asset is already in public DCIM/Gallery
-            console.log('AnyFetch album note:', albumErr);
+            saved = true;
+            finalPath = asset.uri;
+            // Delete temporary cache file once saved to MediaStore
+            await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
+          } else {
+            console.warn('MediaLibrary permission not granted');
           }
-          saved = true;
-          finalPath = asset.uri;
-          // Delete temporary cache file once saved to MediaStore
-          await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
-        } else {
-          console.warn('MediaLibrary permission not granted');
         }
       } catch (mediaErr) {
         console.warn('MediaLibrary save error, falling back to share sheet:', mediaErr);

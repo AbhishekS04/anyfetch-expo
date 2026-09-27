@@ -2,6 +2,7 @@
   "expo": {
     "name": "anyfetch",
     "slug": "anyfetch",
+    "scheme": "anyfetch",
     "version": "1.0.9",
     "orientation": "portrait",
     "backgroundColor": "#000000",
@@ -26,6 +27,19 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.REQUEST_INSTALL_PACKAGES"
+      ],
+      "intentFilters": [
+        {
+          "action": "SEND",
+          "data": [
+            {
+              "mimeType": "text/plain"
+            }
+          ],
+          "category": [
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "plugins": [

@@ -49,7 +49,9 @@ export default function App() {
             headerTitleStyle: { fontWeight: '400', fontSize: 16 },
             headerShadowVisible: false,
             contentStyle: { backgroundColor: '#000000' },
-            animation: 'fade',
+            animation: 'slide_from_right',
+            animationDuration: 280,
+            gestureEnabled: true,
           }}>
           <Stack.Screen
             name="Home"
