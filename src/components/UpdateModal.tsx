@@ -17,6 +17,7 @@ import {
   GitHubReleaseInfo,
   UpdateDownloadProgress,
 } from '../services/githubUpdate';
+import MarkdownView from './MarkdownView';
 
 const { width: W } = Dimensions.get('window');
 
@@ -108,11 +109,16 @@ export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateM
 
           {/* Release Notes */}
           <View style={s.notesContainer}>
-            <Text style={s.notesHeader}>WHAT'S NEW</Text>
-            <ScrollView style={s.notesScroll} nestedScrollEnabled>
-              <Text style={s.notesText}>
-                {releaseInfo.releaseNotes.trim() || 'General performance updates and fixes.'}
-              </Text>
+            <View style={s.notesHeaderRow}>
+              <Ionicons name="newspaper-outline" size={13} color="#FF9F0A" />
+              <Text style={s.notesHeader}>WHAT'S NEW</Text>
+            </View>
+            <ScrollView
+              style={s.notesScroll}
+              contentContainerStyle={s.notesScrollContent}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={true}>
+              <MarkdownView content={releaseInfo.releaseNotes} />
             </ScrollView>
           </View>
 
@@ -253,6 +259,11 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2C2C2E',
   },
+  notesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   notesHeader: {
     color: '#FF9F0A',
     fontSize: 11,
@@ -260,12 +271,10 @@ const s = StyleSheet.create({
     letterSpacing: 1,
   },
   notesScroll: {
-    maxHeight: 120,
+    maxHeight: 180,
   },
-  notesText: {
-    color: '#D1D1D6',
-    fontSize: 13,
-    lineHeight: 19,
+  notesScrollContent: {
+    paddingBottom: 4,
   },
   errorBox: {
     flexDirection: 'row',
