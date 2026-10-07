@@ -6,7 +6,8 @@
  */
 
 import { Platform, Linking } from 'react-native';
-import Constants from 'expo-constants';
+import Constants, { AppOwnership } from 'expo-constants';
+import * as Application from 'expo-application';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
 import {
@@ -112,6 +113,7 @@ export async function saveGitHubRepo(repoInput: string): Promise<string> {
  * Compare two semver strings: returns true if latest > current
  */
 export function isNewerVersion(latest: string, current: string): boolean {
+  if (!latest || !current) return false;
   const clean = (v: string) => v.replace(/^v/i, '').trim();
   const v1Parts = clean(latest).split('.').map(n => parseInt(n, 10) || 0);
   const v2Parts = clean(current).split('.').map(n => parseInt(n, 10) || 0);
@@ -127,7 +129,15 @@ export function isNewerVersion(latest: string, current: string): boolean {
 }
 
 export function getCurrentAppVersion(): string {
-  return appJson.expo?.version || Constants.expoConfig?.version || '1.0.0';
+  if (Constants.appOwnership === AppOwnership.Expo) {
+    return Constants.expoConfig?.version || appJson.expo?.version || '1.0.0';
+  }
+  return (
+    Application.nativeApplicationVersion ||
+    Constants.expoConfig?.version ||
+    appJson.expo?.version ||
+    '1.0.0'
+  );
 }
 
 /**
@@ -179,7 +189,7 @@ export async function checkForGitHubUpdate(customRepo?: string): Promise<GitHubR
 
   const rawTag = releaseData.tag_name || '';
   const latestVersion = rawTag.replace(/^v/i, '').trim();
-  const isAvailable = isNewerVersion(latestVersion, currentVersion);
+  const hasNewer = isNewerVersion(latestVersion, currentVersion);
 
   // Find APK asset in release
   const assets: any[] = Array.isArray(releaseData.assets) ? releaseData.assets : [];
@@ -190,7 +200,7 @@ export async function checkForGitHubUpdate(customRepo?: string): Promise<GitHubR
   );
 
   return {
-    isAvailable,
+    isAvailable: hasNewer && !!apkAsset?.browser_download_url,
     currentVersion,
     latestVersion,
     releaseTitle: releaseData.name || rawTag,
@@ -252,14 +262,23 @@ export async function downloadAndInstallApk(
       return { ok: false, error: 'Failed to complete APK download.' };
     }
 
+    // Verify downloaded file integrity before attempting to install
+    const fileInfo = await getInfoAsync(result.uri);
+    if (!fileInfo.exists || ('size' in fileInfo && fileInfo.size < 1024 * 1024)) {
+      await deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+      return { ok: false, error: 'Downloaded file appears incomplete or corrupted. Please try again.' };
+    }
+
     // Launch installation on Android
     if (Platform.OS === 'android') {
       try {
         const contentUri = await getContentUriAsync(result.uri);
 
+        // Combined Android Intent Flags:
+        // FLAG_GRANT_READ_URI_PERMISSION (1) | FLAG_ACTIVITY_NEW_TASK (268435456) = 268435457
         await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
           data: contentUri,
-          flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+          flags: 268435457,
           type: 'application/vnd.android.package-archive',
         });
 

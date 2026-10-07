@@ -33,6 +33,12 @@ if (!fs.existsSync(androidDir)) {
     cwd: rootDir,
     stdio: 'inherit',
   });
+} else {
+  console.log('[Notice] Syncing configuration to existing android/ folder...');
+  execSync('npx expo prebuild --platform android --no-install --no-clean', {
+    cwd: rootDir,
+    stdio: 'inherit',
+  });
 }
 
 // Auto-detect Android SDK & JDK if not in environment
@@ -60,9 +66,25 @@ if (!process.env.JAVA_HOME) {
 console.log(`[Info] Using ANDROID_HOME: ${process.env.ANDROID_HOME || '(default)'}`);
 console.log(`[Info] Using JAVA_HOME:    ${process.env.JAVA_HOME || '(default)'}\n`);
 
-console.log('[1/3] Building Release APK with Gradle...');
+// Clean previous generated bundle and intermediates to guarantee fresh JS compilation
+const staleBundleDirs = [
+  path.join(androidDir, 'app', 'build', 'generated', 'assets', 'react'),
+  path.join(androidDir, 'app', 'build', 'intermediates', 'assets'),
+  path.join(androidDir, 'app', 'build', 'intermediates', 'compressed_assets'),
+];
+for (const dir of staleBundleDirs) {
+  if (fs.existsSync(dir)) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+console.log('[1/3] Building Release APK with Gradle (clean + assembleRelease)...');
 const gradlewCmd = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
-const buildResult = spawnSync(gradlewCmd, ['assembleRelease', '--no-daemon'], {
+const buildResult = spawnSync(gradlewCmd, ['clean', 'assembleRelease', '--no-daemon'], {
   cwd: androidDir,
   stdio: 'inherit',
 });
@@ -88,7 +110,26 @@ const targetApkPath = path.join(buildsDir, targetApkName);
 
 fs.copyFileSync(outputApk, targetApkPath);
 
-// 3. Print Summary
+// 3. Ensure changelog exists in changelogs/
+const changelogsDir = path.join(rootDir, 'changelogs');
+if (!fs.existsSync(changelogsDir)) {
+  fs.mkdirSync(changelogsDir, { recursive: true });
+}
+const changelogFile = path.join(changelogsDir, `${versionTag}.md`);
+if (!fs.existsSync(changelogFile)) {
+  const defaultNotes = `# AnyFetch ${versionTag}
+
+### 🔒 Security & Stability
+- Security enhancements and dependency updates.
+
+### 🛠️ Improvements & Fixes
+- Bug fixes, performance optimizations, and stability improvements.
+`;
+  fs.writeFileSync(changelogFile, defaultNotes, 'utf8');
+  console.log(`[Notice] Generated changelog template: changelogs/${versionTag}.md`);
+}
+
+// 4. Print Summary
 const stats = fs.statSync(targetApkPath);
 const sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
 
@@ -98,5 +139,6 @@ console.log(`  Version   : ${versionTag}`);
 console.log(`  File Name : ${targetApkName}`);
 console.log(`  Size      : ${sizeMb} MB`);
 console.log(`  Location  : ${targetApkPath}`);
+console.log(`  Changelog : ${changelogFile}`);
 console.log('------------------------------------------------------\n');
 console.log(`✓ Your APK is ready in: builds/${versionTag}/${targetApkName}\n`);

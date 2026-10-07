@@ -3,7 +3,7 @@
     "name": "anyfetch",
     "slug": "anyfetch",
     "scheme": "anyfetch",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "backgroundColor": "#000000",
     "icon": "./assets/icon.png",
@@ -13,7 +13,7 @@
       "bundleIdentifier": "com.abhishek.anyfetch"
     },
     "android": {
-      "versionCode": 10,
+      "versionCode": 11,
       "usesCleartextTraffic": true,
       "backgroundColor": "#000000",
       "adaptiveIcon": {

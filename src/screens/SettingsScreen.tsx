@@ -29,7 +29,6 @@ import {
   writeAsStringAsync,
 } from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
-import appJson from '../../app.json';
 import {
   checkForGitHubUpdate,
   getSavedGitHubRepo,
@@ -38,6 +37,7 @@ import {
   DEFAULT_REPO_URL,
   normalizeGitHubRepo,
   GitHubReleaseInfo,
+  getCurrentAppVersion,
 } from '../services/githubUpdate';
 import UpdateModal from '../components/UpdateModal';
 
@@ -57,7 +57,7 @@ export default function SettingsScreen() {
   const [customDirectoryUri, setCustomDirectoryUri] = useState('');
   const [customDirectoryName, setCustomDirectoryName] = useState('');
 
-  const runningVersion = appJson.expo?.version || Constants.expoConfig?.version || '1.0.8';
+  const runningVersion = getCurrentAppVersion();
 
   /**
    * Check for full APK releases on GitHub automatically using the target repo

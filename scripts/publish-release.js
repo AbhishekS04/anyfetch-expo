@@ -28,9 +28,13 @@ console.log(`\n======================================================`);
 console.log(`  ANYFETCH LOCAL RELEASE PUBLISHER — ${versionTag}`);
 console.log(`======================================================\n`);
 
-// 1. Check if APK exists; if not, build it locally
-if (!fs.existsSync(apkPath)) {
-  console.log(`[Info] No local APK found at builds/${versionTag}/. Building now...\n`);
+// 1. Check if APK exists; if not or if rebuild requested, build it locally
+const forceRebuild = process.argv.includes('--rebuild') || process.argv.includes('-f');
+if (!fs.existsSync(apkPath) || forceRebuild) {
+  if (forceRebuild && fs.existsSync(apkPath)) {
+    try { fs.unlinkSync(apkPath); } catch {}
+  }
+  console.log(`[Info] ${forceRebuild ? 'Rebuilding' : 'No local'} APK found for ${versionTag}. Building now...\n`);
   const buildResult = spawnSync('node', ['scripts/build-apk.js'], {
     cwd: rootDir,
     stdio: 'inherit',
@@ -55,8 +59,26 @@ try {
   process.exit(1);
 }
 
-// 3. Publish or update release on GitHub
-console.log(`[Info] Publishing ${versionTag} to GitHub Releases...`);
+// 3. Ensure changelog file exists
+const changelogsDir = path.join(rootDir, 'changelogs');
+if (!fs.existsSync(changelogsDir)) {
+  fs.mkdirSync(changelogsDir, { recursive: true });
+}
+const changelogFile = path.join(changelogsDir, `${versionTag}.md`);
+if (!fs.existsSync(changelogFile)) {
+  const defaultNotes = `# AnyFetch ${versionTag}
+
+### 🔒 Security & Stability
+- Security enhancements and dependency updates.
+
+### 🛠️ Improvements & Fixes
+- Bug fixes, performance optimizations, and stability improvements.
+`;
+  fs.writeFileSync(changelogFile, defaultNotes, 'utf8');
+}
+
+// 4. Publish or update release on GitHub
+console.log(`[Info] Publishing ${versionTag} to GitHub Releases with notes from ${changelogFile}...`);
 
 try {
   // Check if release already exists
@@ -71,15 +93,15 @@ try {
       cwd: rootDir,
       stdio: 'inherit',
     });
-    console.log(`[Info] Ensuring release ${versionTag} is published (draft=false) and marked latest...`);
-    execSync(`gh release edit "${versionTag}" --draft=false --latest`, {
+    console.log(`[Info] Updating release notes and ensuring release ${versionTag} is published (draft=false) and marked latest...`);
+    execSync(`gh release edit "${versionTag}" --draft=false --latest --notes-file "${changelogFile}"`, {
       cwd: rootDir,
       stdio: 'inherit',
     });
   } else {
     console.log(`[Info] Creating new GitHub Release ${versionTag}...`);
     execSync(
-      `gh release create "${versionTag}" "${apkPath}" --title "AnyFetch ${versionTag}" --generate-notes --latest`,
+      `gh release create "${versionTag}" "${apkPath}" --title "AnyFetch ${versionTag}" --notes-file "${changelogFile}" --latest`,
       { cwd: rootDir, stdio: 'inherit' }
     );
   }
