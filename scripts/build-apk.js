@@ -66,13 +66,12 @@ if (!process.env.JAVA_HOME) {
 console.log(`[Info] Using ANDROID_HOME: ${process.env.ANDROID_HOME || '(default)'}`);
 console.log(`[Info] Using JAVA_HOME:    ${process.env.JAVA_HOME || '(default)'}\n`);
 
-// Clean previous generated bundle and intermediates to guarantee fresh JS compilation
-const staleBundleDirs = [
-  path.join(androidDir, 'app', 'build', 'generated', 'assets', 'react'),
-  path.join(androidDir, 'app', 'build', 'intermediates', 'assets'),
-  path.join(androidDir, 'app', 'build', 'intermediates', 'compressed_assets'),
+// Clean previous generated bundle, intermediates, and .cxx to guarantee fresh compilation without CMake clean order bug
+const staleDirs = [
+  path.join(androidDir, 'app', 'build'),
+  path.join(androidDir, 'app', '.cxx'),
 ];
-for (const dir of staleBundleDirs) {
+for (const dir of staleDirs) {
   if (fs.existsSync(dir)) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -82,9 +81,9 @@ for (const dir of staleBundleDirs) {
   }
 }
 
-console.log('[1/3] Building Release APK with Gradle (clean + assembleRelease)...');
+console.log('[1/3] Building Release APK with Gradle...');
 const gradlewCmd = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
-const buildResult = spawnSync(gradlewCmd, ['clean', 'assembleRelease', '--no-daemon'], {
+const buildResult = spawnSync(gradlewCmd, ['assembleRelease', '--no-daemon'], {
   cwd: androidDir,
   stdio: 'inherit',
 });
