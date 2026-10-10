@@ -32,18 +32,20 @@ export async function extractYouTubeServer(
     }
   } catch {}
 
-  // 2. Query InnerTube Android Client
+  // 2. Query InnerTube ANDROID_VR Client
   const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'User-Agent': 'com.google.android.youtube/19.29.35 (Linux; U; Android 14) gzip',
+      'User-Agent': 'Mozilla/5.0 (Android; Mobile)',
     },
     body: JSON.stringify({
       context: {
         client: {
-          clientName: 'ANDROID',
-          clientVersion: '19.29.35',
+          clientName: 'ANDROID_VR',
+          clientVersion: '1.61.48',
+          deviceMake: 'Oculus',
+          deviceModel: 'Quest 3',
           hl: 'en',
           gl: 'US',
         },
