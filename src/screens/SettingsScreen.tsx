@@ -423,6 +423,7 @@ export default function SettingsScreen() {
         <View style={s.glassCard}>
           <TouchableOpacity
             activeOpacity={0.7}
+            delayPressIn={0}
             style={s.rowBtn}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -846,6 +847,7 @@ export default function SettingsScreen() {
           {/* Deep Link to Dedicated About & Creator Screen */}
           <TouchableOpacity
             activeOpacity={0.7}
+            delayPressIn={0}
             style={s.aboutRowBtn}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

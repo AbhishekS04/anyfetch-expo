@@ -15,7 +15,11 @@ dotenv.config();
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const EXTERNAL_URL = process.env.EXTERNAL_URL || '';
+const EXTERNAL_URL = (
+  process.env.EXTERNAL_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  ''
+).trim();
 
 app.set('trust proxy', 1);
 app.use(cors());

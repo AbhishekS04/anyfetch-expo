@@ -15,8 +15,7 @@ jobs:
         run: |
           TARGET_URL="${{ secrets.ANYFETCH_API_URL }}"
           if [ -z "$TARGET_URL" ]; then
-            echo "⚠️ ANYFETCH_API_URL secret not set yet. Set it in GitHub Repo Settings -> Secrets to target your live deployment."
-            exit 0
+            TARGET_URL="https://anyfetch-api.getvoroa.com"
           fi
           
           # Clean trailing slash and append /health

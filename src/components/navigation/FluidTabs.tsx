@@ -113,6 +113,7 @@ export const FluidTabs: React.FC<FluidTabsProps> = ({
             <TouchableOpacity
               key={tab.id}
               activeOpacity={0.7}
+              delayPressIn={0}
               onPress={() => handleTabPress(tab.id)}
               style={[
                 styles.tabButton,

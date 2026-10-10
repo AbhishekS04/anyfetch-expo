@@ -13,6 +13,7 @@ import {
   Animated,
   Modal,
   Easing,
+  Platform,
   StyleProp,
   ViewStyle,
 } from 'react-native';
@@ -63,7 +64,6 @@ export const CrossBlurPageTransition: React.FC<CrossBlurPageTransitionProps> = (
   useEffect(() => {
     if (trigger > 0) {
       setTransitionState('entering');
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
       const totalMs = Math.round(duration * 1000);
       const enterMs = Math.round(totalMs * 0.45);
@@ -122,13 +122,15 @@ export const CrossBlurPageTransition: React.FC<CrossBlurPageTransitionProps> = (
       ]}
       pointerEvents="none"
     >
-      {/* Soft Background Blur Layer */}
-      <BlurView
-        tint="dark"
-        intensity={maxBlur}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {/* Soft Background Blur Layer (iOS only for buttery 60fps; Android uses GPU-accelerated veil) */}
+      {Platform.OS === 'ios' ? (
+        <BlurView
+          tint="dark"
+          intensity={maxBlur}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      ) : null}
 
       {/* Cross-fading Soft Color Veil */}
       <View

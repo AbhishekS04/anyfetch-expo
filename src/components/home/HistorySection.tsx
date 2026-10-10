@@ -1,62 +1,121 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
-  Image,
-  Pressable,
-  TouchableOpacity,
-  ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
-import { ArrowRight, X } from 'reicon-react-native';
+import { ArrowRight } from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
 import { HistoryFilter, HistoryItem } from '../../hooks/useDownloadHistory';
-import { PLATFORM_THEMES, DEFAULT_THEME } from '../../theme/platformColors';
+import { DraggableMarquee, MarqueeItem } from './DraggableMarquee';
 import { FONTS } from '../../theme/typography';
+import { SupportedPlatform } from '../../theme/platformColors';
 
 interface HistorySectionProps {
   history: HistoryItem[];
-  filter: HistoryFilter;
-  onSelectFilter: (filter: HistoryFilter) => void;
-  filteredItems: HistoryItem[];
+  filter?: HistoryFilter;
+  onSelectFilter?: (filter: HistoryFilter) => void;
+  filteredItems?: HistoryItem[];
   onSelectItem: (item: HistoryItem) => void;
-  onDeleteItem: (url: string) => void;
+  onDeleteItem?: (url: string) => void;
   activeColor: string;
   onViewAll?: () => void;
 }
 
+const CURATED_SHOWCASE_ITEMS: MarqueeItem[] = [
+  {
+    id: 'curated-ig',
+    src: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&q=80',
+    platform: 'instagram' as SupportedPlatform,
+  },
+  {
+    id: 'curated-yt',
+    src: 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=500&q=80',
+    platform: 'youtube' as SupportedPlatform,
+  },
+  {
+    id: 'curated-tt',
+    src: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=500&q=80',
+    platform: 'tiktok' as SupportedPlatform,
+  },
+  {
+    id: 'curated-pin',
+    src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&q=80',
+    platform: 'pinterest' as SupportedPlatform,
+  },
+  {
+    id: 'curated-tw',
+    src: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500&q=80',
+    platform: 'twitter' as SupportedPlatform,
+  },
+  {
+    id: 'curated-rd',
+    src: 'https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?w=500&q=80',
+    platform: 'reddit' as SupportedPlatform,
+  },
+];
+
 export default function HistorySection({
   history,
-  filter,
-  onSelectFilter,
-  filteredItems,
   onSelectItem,
-  onDeleteItem,
   activeColor,
   onViewAll,
 }: HistorySectionProps) {
-  if (history.length === 0) return null;
+  // Convert history items to DraggableMarquee cards
+  const marqueeItems: MarqueeItem[] = useMemo(() => {
+    const userItems: MarqueeItem[] = history
+      .map((item, idx) => {
+        const first = item.singleResult ?? item.carouselItems?.[0];
+        const thumb = first?.thumbnail || first?.url || '';
+        return {
+          id: `hist-${item.url}-${idx}`,
+          src: thumb,
+          platform: item.platform as SupportedPlatform,
+          url: item.url,
+          originalItem: item,
+        };
+      })
+      .filter(item => Boolean(item.src));
 
-  const filters: HistoryFilter[] = ['all', 'instagram', 'youtube', 'tiktok', 'reddit', 'twitter', 'facebook', 'pinterest'];
-  const labels: Record<HistoryFilter, string> = {
-    all: 'All',
-    instagram: 'Instagram',
-    youtube: 'YouTube',
-    tiktok: 'TikTok',
-    reddit: 'Reddit',
-    twitter: 'Twitter',
-    facebook: 'Facebook',
-    pinterest: 'Pinterest',
+    if (userItems.length === 0) {
+      return CURATED_SHOWCASE_ITEMS;
+    }
+
+    // If user has few downloads (< 5), blend with curated showcase so the marquee is rich & full
+    if (userItems.length < 5) {
+      const needed = 6 - userItems.length;
+      return [...userItems, ...CURATED_SHOWCASE_ITEMS.slice(0, needed)];
+    }
+
+    return userItems;
+  }, [history]);
+
+  const handleSelectMarqueeItem = (item: MarqueeItem) => {
+    if (item.originalItem) {
+      onSelectItem(item.originalItem);
+    } else if (onViewAll) {
+      onViewAll();
+    }
   };
 
   return (
     <View style={s.section}>
       {/* Header Row */}
       <View style={s.headerRow}>
-        <Text style={s.sectionTitle}>Recent Downloads</Text>
+        <View style={s.titleRow}>
+          <Text style={s.sectionTitle}>Recent Downloads</Text>
+          {history.length > 0 && (
+            <View style={s.countBadge}>
+              <Text style={s.countBadgeText}>{history.length}</Text>
+            </View>
+          )}
+        </View>
+
         {onViewAll && (
           <TouchableOpacity
             activeOpacity={0.7}
+            delayPressIn={0}
             style={s.viewAllBtn}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -68,176 +127,76 @@ export default function HistorySection({
         )}
       </View>
 
-      {/* Filter chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipsRow}>
-        {filters.map(f => {
-          const active = filter === f;
-          const hasItems = f === 'all' ? history.length > 0 : history.some(h => h.platform === f);
-          if (!hasItems) return null;
-
-          return (
-            <TouchableOpacity
-              key={f}
-              activeOpacity={0.7}
-              style={[
-                s.chip,
-                active && { backgroundColor: activeColor, borderColor: activeColor },
-              ]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                onSelectFilter(f);
-              }}>
-              <Text style={[s.chipText, active && { color: '#000000' }]}>{labels[f]}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* History cards row */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.cardsRow}>
-        {filteredItems.map(item => {
-          const first = item.singleResult ?? item.carouselItems?.[0];
-          const thumb = first?.thumbnail ?? first?.url;
-          const theme = PLATFORM_THEMES[item.platform];
-          const PlatformIcon = theme?.Icon ?? DEFAULT_THEME.Icon;
-
-          return (
-            <View key={item.url} style={s.cardWrapper}>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                style={s.card}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  onSelectItem(item);
-                }}>
-                {thumb ? (
-                  <Image source={{ uri: thumb }} style={s.thumb} />
-                ) : (
-                  <View style={s.placeholder}>
-                    <PlatformIcon size={20} color="#48484A" />
-                  </View>
-                )}
-                <View style={[s.platformBadge, { backgroundColor: theme?.primary ?? '#FF9F0A' }]}>
-                  <PlatformIcon size={10} color="#FFFFFF" />
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  onDeleteItem(item.url);
-                }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                style={s.deleteBtn}>
-                <X size={12} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </ScrollView>
+      {/* Draggable Marquee — Continuous Smooth Motion with Drag Momentum & Zero Text Clutter */}
+      <View style={s.marqueeContainer}>
+        <DraggableMarquee
+          items={marqueeItems}
+          speed={0.42}
+          itemWidth={132}
+          itemHeight={182}
+          gap={14}
+          throwMultiplier={2.2}
+          throwFriction={0.965}
+          onSelectItem={handleSelectMarqueeItem}
+        />
+      </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
   section: {
-    marginTop: 20,
+    marginTop: 22,
     width: '100%',
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 6,
-    marginBottom: 10,
+    paddingHorizontal: 8,
+    marginBottom: 14,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   sectionTitle: {
     fontFamily: FONTS.display,
-    fontSize: 13.5,
+    fontSize: 13,
     color: '#8E8E93',
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    letterSpacing: 0.9,
+    fontWeight: '600',
+  },
+  countBadge: {
+    backgroundColor: '#1E1E22',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  countBadgeText: {
+    fontFamily: FONTS.sans,
+    fontSize: 10.5,
+    color: '#A1A1AA',
+    fontWeight: '700',
   },
   viewAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 2,
-    paddingHorizontal: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
   },
   viewAllText: {
     fontFamily: FONTS.sans,
-    fontSize: 12,
+    fontSize: 12.5,
+    fontWeight: '600',
   },
-  chipsRow: {
-    paddingHorizontal: 4,
-    gap: 8,
-    marginBottom: 12,
-  },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  chipText: {
-    fontFamily: FONTS.sans,
-    color: '#8E8E93',
-    fontSize: 12,
-  },
-  cardsRow: {
-    paddingHorizontal: 4,
-    gap: 12,
-  },
-  cardWrapper: {
-    position: 'relative',
-  },
-  card: {
-    width: 72,
-    height: 72,
-    borderRadius: 14,
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  thumb: {
+  marqueeContainer: {
     width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  placeholder: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  platformBadge: {
-    position: 'absolute',
-    bottom: 4,
-    right: 4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#000000',
-  },
-  deleteBtn: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#3A3A3C',
+    paddingVertical: 4,
   },
 });

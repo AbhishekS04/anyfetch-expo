@@ -4,18 +4,23 @@
  * (Voroa / Render / Railway) from going into idle sleep mode.
  */
 export function startKeepAlive(port: number, externalUrl?: string) {
-  const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+  // Render / Voroa free tier goes to sleep after 15 minutes of no external traffic.
+  // Pinging every 4 minutes guarantees the idle timer is constantly reset.
+  const PING_INTERVAL_MS = 4 * 60 * 1000; // 4 minutes
 
-  console.log(`[KeepAlive] Heartbeat initialized. Interval: 10 minutes.`);
+  console.log(`[KeepAlive] Heartbeat initialized. Interval: 4 minutes.`);
   if (externalUrl) {
     console.log(`[KeepAlive] Target external URL: ${externalUrl}`);
+  } else {
+    console.log(`[KeepAlive] Note: Set EXTERNAL_URL or RENDER_EXTERNAL_URL to ping via public internet edge.`);
   }
 
   const ping = async () => {
-    const targets = [`http://localhost:${port}/health`];
+    const targets: string[] = [];
     if (externalUrl && !externalUrl.includes('localhost')) {
       targets.push(`${externalUrl.replace(/\/+$/, '')}/health`);
     }
+    targets.push(`http://localhost:${port}/health`);
 
     for (const target of targets) {
       try {

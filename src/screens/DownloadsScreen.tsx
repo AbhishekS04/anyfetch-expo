@@ -43,6 +43,7 @@ import Svg, {
   LinearGradient,
   RadialGradient,
   Stop,
+  Ellipse,
 } from 'react-native-svg';
 import { Trash, Play, Share as ShareIcon } from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
@@ -70,7 +71,7 @@ const DIALER_ITEM_GAP = 10;
 const DIALER_SNAP_INTERVAL = DIALER_ITEM_WIDTH + DIALER_ITEM_GAP;
 const DIALER_PADDING_HORIZONTAL = Math.round((SCREEN_WIDTH - DIALER_ITEM_WIDTH) / 2);
 
-export type PlatformCategory = 'youtube' | 'instagram' | 'facebook' | 'twitter' | 'pinterest' | 'tiktok';
+export type PlatformCategory = 'youtube' | 'instagram' | 'facebook' | 'twitter' | 'pinterest' | 'tiktok' | 'reddit' | 'web';
 
 export interface CategoryMediaItem {
   id: string;
@@ -300,6 +301,58 @@ const DEFAULT_CATEGORY_DATA: Record<PlatformCategory, CategoryMediaItem[]> = {
       platform: 'tiktok',
     },
   ],
+  reddit: [
+    {
+      id: 'rd-1',
+      title: 'Top Discussion on r/technology',
+      date: '15 May, 2025',
+      src: photo('1618005182384-a83a8bd57fbe'),
+      duration: '1:10',
+      platform: 'reddit',
+    },
+    {
+      id: 'rd-2',
+      title: 'r/gaming Masterpiece Showcase',
+      date: '11 May, 2025',
+      src: photo('1550745165-9bc0b252726f'),
+      duration: '0:42',
+      platform: 'reddit',
+    },
+    {
+      id: 'rd-3',
+      title: 'r/space Deep Sky Nebula 4K',
+      date: '06 May, 2025',
+      src: photo('1534447677768-be436bb09401'),
+      duration: '2:15',
+      platform: 'reddit',
+    },
+    {
+      id: 'rd-4',
+      title: 'r/earthporn Cinematic Mountain Drone',
+      date: '01 May, 2025',
+      src: photo('1507525428034-b723cf961d3e'),
+      duration: '0:50',
+      platform: 'reddit',
+    },
+  ],
+  web: [
+    {
+      id: 'web-1',
+      title: 'Cinematic Visuals Showcase 4K',
+      date: '15 May, 2025',
+      src: photo('1579546929518-9e396f3cc809'),
+      duration: '1:45',
+      platform: 'web',
+    },
+    {
+      id: 'web-2',
+      title: 'Direct Stream Video Capture',
+      date: '10 May, 2025',
+      src: photo('1614850523459-c2f4c699c52e'),
+      duration: '0:35',
+      platform: 'web',
+    },
+  ],
 };
 
 export default function DownloadsScreen() {
@@ -352,7 +405,13 @@ export default function DownloadsScreen() {
     if (p === 'facebook' || url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.com')) {
       return 'facebook';
     }
-    return 'youtube';
+    if (p === 'reddit' || url.includes('reddit.com') || url.includes('redd.it')) {
+      return 'reddit';
+    }
+    if (p === 'youtube' || url.includes('youtube.com') || url.includes('youtu.be')) {
+      return 'youtube';
+    }
+    return 'web';
   }, []);
 
   // Track real download count per platform accurately
@@ -364,6 +423,8 @@ export default function DownloadsScreen() {
       twitter: 0,
       pinterest: 0,
       tiktok: 0,
+      reddit: 0,
+      web: 0,
     };
     history.forEach((item) => {
       const cat = resolveCategory(item);
@@ -381,6 +442,8 @@ export default function DownloadsScreen() {
       twitter: [],
       pinterest: [],
       tiktok: [],
+      reddit: [],
+      web: [],
     };
 
     history.forEach((item, idx) => {
@@ -564,6 +627,7 @@ export default function DownloadsScreen() {
           {/* ── CARD 1: YOUTUBE ── */}
           <TouchableOpacity
             activeOpacity={0.78}
+            delayPressIn={0}
             style={[s.cardBase, s.ytCard]}
             onPress={() => openCategoryViewer('youtube')}
           >
@@ -589,6 +653,7 @@ export default function DownloadsScreen() {
           {/* ── CARD 2: INSTAGRAM ── */}
           <TouchableOpacity
             activeOpacity={0.78}
+            delayPressIn={0}
             style={[s.cardBase, s.instaCard]}
             onPress={() => openCategoryViewer('instagram')}
           >
@@ -614,6 +679,7 @@ export default function DownloadsScreen() {
           {/* ── CARD 3: TWITTER / X ── */}
           <TouchableOpacity
             activeOpacity={0.78}
+            delayPressIn={0}
             style={[s.cardBase, s.twitterCard]}
             onPress={() => openCategoryViewer('twitter')}
           >
@@ -639,6 +705,7 @@ export default function DownloadsScreen() {
           {/* ── CARD 4: FACEBOOK ── */}
           <TouchableOpacity
             activeOpacity={0.78}
+            delayPressIn={0}
             style={[s.cardBase, s.fbCard]}
             onPress={() => openCategoryViewer('facebook')}
           >
@@ -664,6 +731,7 @@ export default function DownloadsScreen() {
           {/* ── CARD 5: PINTEREST ── */}
           <TouchableOpacity
             activeOpacity={0.78}
+            delayPressIn={0}
             style={[s.cardBase, s.pinCard]}
             onPress={() => openCategoryViewer('pinterest')}
           >
@@ -689,6 +757,7 @@ export default function DownloadsScreen() {
           {/* ── CARD 6: TIKTOK ── */}
           <TouchableOpacity
             activeOpacity={0.78}
+            delayPressIn={0}
             style={[s.cardBase, s.ttCard]}
             onPress={() => openCategoryViewer('tiktok')}
           >
@@ -708,6 +777,58 @@ export default function DownloadsScreen() {
             <View style={s.cardFooter}>
               <Text style={s.platformSub}>Clips & Trends</Text>
               <Text style={[s.cardChevron, { color: '#00F2FE' }]}>›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* ── CARD 7: REDDIT ── */}
+          <TouchableOpacity
+            activeOpacity={0.78}
+            delayPressIn={0}
+            style={[s.cardBase, s.redditCard]}
+            onPress={() => openCategoryViewer('reddit')}
+          >
+            <View style={s.cardHeader}>
+              <Text style={s.platformTitle}>Reddit</Text>
+              <View style={[s.badgePill, s.redditBadge]}>
+                <Text style={s.badgePillText}>
+                  {realCounts.reddit} Saved
+                </Text>
+              </View>
+            </View>
+
+            <View style={s.graphicBox}>
+              <RedditCardIcon />
+            </View>
+
+            <View style={s.cardFooter}>
+              <Text style={s.platformSub}>Posts & Videos</Text>
+              <Text style={[s.cardChevron, { color: '#FF4500' }]}>›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* ── CARD 8: WEB & OTHER ── */}
+          <TouchableOpacity
+            activeOpacity={0.78}
+            delayPressIn={0}
+            style={[s.cardBase, s.webCard]}
+            onPress={() => openCategoryViewer('web')}
+          >
+            <View style={s.cardHeader}>
+              <Text style={s.platformTitle}>Web Media</Text>
+              <View style={[s.badgePill, s.webBadge]}>
+                <Text style={s.badgePillText}>
+                  {realCounts.web} Saved
+                </Text>
+              </View>
+            </View>
+
+            <View style={s.graphicBox}>
+              <WebCardIcon />
+            </View>
+
+            <View style={s.cardFooter}>
+              <Text style={s.platformSub}>Direct & Others</Text>
+              <Text style={[s.cardChevron, { color: '#00E5FF' }]}>›</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -1096,6 +1217,77 @@ function TikTokCardIcon() {
   );
 }
 
+/**
+ * Reddit Card Icon:
+ * Vibrant orange circle with Snoo silhouette
+ */
+function RedditCardIcon() {
+  return (
+    <View style={widgetStyles.iconCenterWrap}>
+      <Svg width={64} height={64} viewBox="0 0 64 64">
+        <Defs>
+          <LinearGradient id="rdGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0%" stopColor="#FF5722" stopOpacity="1" />
+            <Stop offset="100%" stopColor="#FF4500" stopOpacity="1" />
+          </LinearGradient>
+        </Defs>
+        <Circle cx={32} cy={32} r={30} fill="url(#rdGrad)" />
+        {/* Snoo antenna */}
+        <Circle cx={44} cy={16} r={3.2} fill="#FFFFFF" />
+        <Path
+          d="M 32,22 L 36,13 L 42,15.5"
+          stroke="#FFFFFF"
+          strokeWidth={2.8}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {/* Snoo ears */}
+        <Circle cx={15} cy={34} r={4.5} fill="#FFFFFF" />
+        <Circle cx={49} cy={34} r={4.5} fill="#FFFFFF" />
+        {/* Snoo head */}
+        <Ellipse cx={32} cy={35} rx={16} ry={12} fill="#FFFFFF" />
+        {/* Eyes */}
+        <Circle cx={26} cy={34} r={2.8} fill="#FF4500" />
+        <Circle cx={38} cy={34} r={2.8} fill="#FF4500" />
+        {/* Smile */}
+        <Path
+          d="M 27,40 Q 32,44 37,40"
+          stroke="#FF4500"
+          strokeWidth={2.2}
+          fill="none"
+          strokeLinecap="round"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+/**
+ * Web Media Card Icon:
+ * Cyan to royal blue globe emblem
+ */
+function WebCardIcon() {
+  return (
+    <View style={widgetStyles.iconCenterWrap}>
+      <Svg width={64} height={64} viewBox="0 0 64 64">
+        <Defs>
+          <LinearGradient id="webGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <Stop offset="0%" stopColor="#00E5FF" stopOpacity="1" />
+            <Stop offset="100%" stopColor="#0077FE" stopOpacity="1" />
+          </LinearGradient>
+        </Defs>
+        <Circle cx={32} cy={32} r={30} fill="url(#webGrad)" />
+        <Circle cx={32} cy={32} r={18} fill="none" stroke="#FFFFFF" strokeWidth={2.6} />
+        <Ellipse cx={32} cy={32} rx={9} ry={18} fill="none" stroke="#FFFFFF" strokeWidth={2.2} />
+        <Path d="M 14,32 L 50,32" stroke="#FFFFFF" strokeWidth={2.2} />
+        <Path d="M 17,23 L 47,23" stroke="#FFFFFF" strokeWidth={2} />
+        <Path d="M 17,41 L 47,41" stroke="#FFFFFF" strokeWidth={2} />
+      </Svg>
+    </View>
+  );
+}
+
 const widgetStyles = StyleSheet.create({
   iconCenterWrap: {
     alignItems: 'center',
@@ -1197,6 +1389,18 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0, 242, 254, 0.24)',
   },
+  // Card 7: Reddit
+  redditCard: {
+    backgroundColor: '#160B08',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 69, 0, 0.26)',
+  },
+  // Card 8: Web
+  webCard: {
+    backgroundColor: '#07131D',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 229, 255, 0.24)',
+  },
 
   // Card Header & Title Row
   cardHeader: {
@@ -1240,6 +1444,12 @@ const s = StyleSheet.create({
   },
   ttBadge: {
     backgroundColor: 'rgba(0, 242, 254, 0.2)',
+  },
+  redditBadge: {
+    backgroundColor: 'rgba(255, 69, 0, 0.22)',
+  },
+  webBadge: {
+    backgroundColor: 'rgba(0, 229, 255, 0.2)',
   },
 
   graphicBox: {

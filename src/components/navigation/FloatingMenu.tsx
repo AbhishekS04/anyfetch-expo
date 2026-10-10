@@ -407,6 +407,7 @@ export const FloatingMenu = forwardRef<FloatingMenuHandle, FloatingMenuProps>(
                         <TouchableOpacity
                           key={link.label}
                           activeOpacity={0.65}
+                          delayPressIn={0}
                           onPress={() => handlePressLink(link)}
                           style={styles.primaryLinkItem}
                         >
@@ -432,6 +433,7 @@ export const FloatingMenu = forwardRef<FloatingMenuHandle, FloatingMenuProps>(
                         <TouchableOpacity
                           key={link.label}
                           activeOpacity={0.65}
+                          delayPressIn={0}
                           onPress={() => handlePressLink(link)}
                           style={styles.secondaryLinkItem}
                         >
