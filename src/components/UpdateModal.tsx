@@ -10,8 +10,15 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import {
+  Sparkles,
+  Download,
+  Code,
+  DocumentText,
+  AlertCircle,
+} from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   downloadAndInstallApk,
   GitHubReleaseInfo,
@@ -28,6 +35,7 @@ interface UpdateModalProps {
 }
 
 export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateModalProps) {
+  const insets = useSafeAreaInsets();
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<UpdateDownloadProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -76,12 +84,19 @@ export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateM
       transparent
       animationType="fade"
       onRequestClose={downloading ? undefined : onDismiss}>
-      <View style={s.overlay}>
+      <View
+        style={[
+          s.overlay,
+          {
+            paddingTop: Math.max(insets.top, 24),
+            paddingBottom: Math.max(insets.bottom, 24),
+          },
+        ]}>
         <View style={s.card}>
           {/* Header */}
           <View style={s.headerRow}>
             <View style={s.iconBadge}>
-              <Ionicons name="sparkles" size={24} color="#FF9F0A" />
+              <Sparkles size={24} color="#FF9F0A" />
             </View>
             <View style={s.headerTextCol}>
               <Text style={s.title}>New Update Available</Text>
@@ -95,13 +110,13 @@ export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateM
           <View style={s.metaRow}>
             {releaseInfo.apkSize > 0 && (
               <View style={s.metaBadge}>
-                <Ionicons name="cloud-download-outline" size={14} color="#8E8E93" />
+                <Download size={14} color="#8E8E93" />
                 <Text style={s.metaText}>APK: {formatBytes(releaseInfo.apkSize)}</Text>
               </View>
             )}
             {releaseInfo.repo ? (
               <View style={s.metaBadge}>
-                <Ionicons name="logo-github" size={13} color="#FF9F0A" />
+                <Code size={13} color="#FF9F0A" />
                 <Text style={s.metaText} numberOfLines={1}>{releaseInfo.repo}</Text>
               </View>
             ) : null}
@@ -110,7 +125,7 @@ export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateM
           {/* Release Notes */}
           <View style={s.notesContainer}>
             <View style={s.notesHeaderRow}>
-              <Ionicons name="newspaper-outline" size={13} color="#FF9F0A" />
+              <DocumentText size={13} color="#FF9F0A" />
               <Text style={s.notesHeader}>WHAT'S NEW</Text>
             </View>
             <ScrollView
@@ -125,7 +140,7 @@ export default function UpdateModal({ visible, releaseInfo, onDismiss }: UpdateM
           {/* Progress / Error message */}
           {errorMsg && (
             <View style={s.errorBox}>
-              <Ionicons name="alert-circle" size={16} color="#FF453A" />
+              <AlertCircle size={16} color="#FF453A" />
               <Text style={s.errorText}>{errorMsg}</Text>
             </View>
           )}

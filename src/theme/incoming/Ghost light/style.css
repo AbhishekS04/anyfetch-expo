@@ -1,0 +1,7 @@
+/* Ghost light CSS styling */
+:root {
+  --ghost-light-high: #F4F8FF;
+  --ghost-light-main: #BFD4EE;
+  --ghost-light-mid: #5C749A;
+  --ghost-light-low: #232E4A;
+}

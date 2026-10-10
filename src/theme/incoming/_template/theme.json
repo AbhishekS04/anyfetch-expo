@@ -1,0 +1,35 @@
+{
+  "name": "Template Theme",
+  "type": "sky",
+  "profile": "sRGB",
+  "dividers": [0.25, 0.5, 0.75],
+  "soften": 0,
+  "noise": 10,
+  "speed": 22,
+  "stops": [
+    {
+      "name": "TOP LIGHT",
+      "hex": "#E6F2FF",
+      "rgb": [230, 242, 255],
+      "position": 0.125
+    },
+    {
+      "name": "MAIN TONE",
+      "hex": "#B3D9FF",
+      "rgb": [179, 217, 255],
+      "position": 0.375
+    },
+    {
+      "name": "MID LAYER",
+      "hex": "#80B3FF",
+      "rgb": [128, 179, 255],
+      "position": 0.625
+    },
+    {
+      "name": "LOW SHADOW",
+      "hex": "#6699E6",
+      "rgb": [102, 153, 230],
+      "position": 0.875
+    }
+  ]
+}

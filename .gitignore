@@ -13,3 +13,5 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 builds/
+server/node_modules/
+server/dist/

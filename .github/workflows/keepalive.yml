@@ -1,0 +1,33 @@
+name: AnyFetch API Keep-Alive Bot
+
+on:
+  schedule:
+    # Trigger every 10 minutes to prevent Voroa / Render / free instances from sleeping
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-service:
+    name: Heartbeat Ping
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping AnyFetch Health Endpoint
+        run: |
+          TARGET_URL="${{ secrets.ANYFETCH_API_URL }}"
+          if [ -z "$TARGET_URL" ]; then
+            echo "⚠️ ANYFETCH_API_URL secret not set yet. Set it in GitHub Repo Settings -> Secrets to target your live deployment."
+            exit 0
+          fi
+          
+          # Clean trailing slash and append /health
+          CLEAN_URL="${TARGET_URL%/}/health"
+          echo "⚡ Sending keep-alive heartbeat to $CLEAN_URL..."
+          
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 20 "$CLEAN_URL" || echo "FAILED")
+          echo "Response HTTP Status: $HTTP_STATUS"
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ AnyFetch API is awake and healthy!"
+          else
+            echo "⚠️ Heartbeat returned status $HTTP_STATUS"
+          fi

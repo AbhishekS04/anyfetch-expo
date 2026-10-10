@@ -59,7 +59,15 @@
           "isAccessMediaLocationEnabled": true
         }
       ],
-      "expo-font",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Gambetta-Regular.ttf",
+            "./assets/fonts/GeneralSans-Semibold.ttf"
+          ]
+        }
+      ],
       "expo-sharing",
       "expo-status-bar",
       "expo-video"

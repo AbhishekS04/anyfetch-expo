@@ -10,7 +10,14 @@
  * 5. Legacy GraphQL & numeric PK media API fallbacks
  */
 
-import { extractUrlFromText } from '../utils/download';
+import {
+  extractUrlFromText,
+  resolveDirectMediaUrl,
+  decodeTokenPayload,
+  base64Decode,
+} from '../utils/url';
+
+export { resolveDirectMediaUrl, decodeTokenPayload };
 
 export type IgMediaType = 'video' | 'image' | 'carousel';
 
@@ -35,73 +42,6 @@ const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const CRAWLER_UA =
   'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
-
-// ─── Token Unwrapping & Base64 Decoder (Pure JS) ─────────────────────────────
-
-/**
- * Pure JavaScript base64 decoder that works across Hermes, React Native, and Node.
- */
-function base64Decode(str: string): string {
-  if (typeof atob === 'function') {
-    try {
-      return atob(str);
-    } catch {
-      /* fallback below */
-    }
-  }
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-  let output = '';
-  let input = String(str).replace(/=+$/, '');
-  if (input.length % 4 === 1) return '';
-  for (
-    let bc = 0, bs = 0, buffer: number, idx = 0;
-    (buffer = input.charCodeAt(idx++));
-    ~buffer && ((bs = bc % 4 ? bs * 64 + buffer : buffer), bc++ % 4)
-      ? (output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6))))
-      : 0
-  ) {
-    buffer = chars.indexOf(String.fromCharCode(buffer));
-  }
-  return output;
-}
-
-/**
- * Decodes JWT tokens from proxy services (snapcdn, etc.) to extract the
- * direct underlying Meta CDN (scontent.cdninstagram.com) media URL.
- */
-export function decodeTokenPayload(token: string): string | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length < 2) return null;
-    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4 !== 0) {
-      b64 += '=';
-    }
-    const jsonStr = base64Decode(b64);
-    const parsed = JSON.parse(jsonStr);
-    return parsed?.url || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Unwraps proxy URLs that bundle tokens (e.g. https://dl.snapcdn.app/get?token=...)
- * into the direct, unproxied Meta CDN URL (https://scontent.cdninstagram.com/...).
- */
-export function resolveDirectMediaUrl(rawUrl: string): string {
-  if (!rawUrl) return '';
-  if (rawUrl.includes('token=')) {
-    const token = rawUrl.split('token=')[1]?.split('&')[0];
-    if (token) {
-      const decoded = decodeTokenPayload(token);
-      if (decoded && (decoded.startsWith('http://') || decoded.startsWith('https://'))) {
-        return decoded;
-      }
-    }
-  }
-  return rawUrl;
-}
 
 /**
  * Validates that a URL is a genuine CDN video file and NOT an HTML webpage.

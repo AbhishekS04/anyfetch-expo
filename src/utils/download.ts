@@ -7,6 +7,16 @@
  */
 
 import {
+  resolveDirectMediaUrl,
+  extractUrlFromText,
+  detectPlatform,
+} from './url';
+export {
+  resolveDirectMediaUrl,
+  extractUrlFromText,
+  detectPlatform,
+} from './url';
+import {
   documentDirectory,
   cacheDirectory,
   StorageAccessFramework,
@@ -29,61 +39,6 @@ export interface DownloadResult {
   ok: boolean;
   uri?: string;
   error?: string;
-}
-
-/**
- * Extracts the first valid HTTP/HTTPS URL from any string or clipboard text.
- * Automatically cleans leading/trailing punctuation and social media share captions.
- * Example: "Check out this reel https://www.instagram.com/reel/C8XYZ/?igsh=123 sent via app"
- * -> "https://www.instagram.com/reel/C8XYZ/?igsh=123"
- */
-export function extractUrlFromText(text: string): string {
-  if (!text) return '';
-  const trimmed = text.trim();
-  const match = trimmed.match(/https?:\/\/[^\s<>"'{}|\\^`[\]]+/i);
-  if (match) {
-    let clean = match[0];
-    clean = clean.replace(/[.,;:!?)]+$/, '');
-    return clean;
-  }
-  return trimmed;
-}
-
-/** Detect platform from pasted URL or freeform text containing a link */
-export function detectPlatform(
-  rawText: string,
-): 'instagram' | 'pinterest' | 'twitter' | null {
-  if (!rawText) return null;
-  const clean = extractUrlFromText(rawText).toLowerCase();
-  if (!clean) return null;
-
-  // Instagram: posts, reels (singular & plural), share URLs (incl. ?stkn= new format), tv, instagr.am
-  if (
-    /(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv)\//i.test(clean) ||
-    /(?:instagram\.com|instagr\.am)\/share\//i.test(clean) ||
-    /(?:instagram\.com|instagr\.am)\/[^/]+\/(?:p|reel|reels)\//i.test(clean)
-  ) {
-    return 'instagram';
-  }
-
-  // Pinterest: handles pin.it and pinterest.* pins
-  if (
-    /pin\.it\/[A-Za-z0-9_-]+/i.test(clean) ||
-    /pinterest\.[a-z.]+\/pin\//i.test(clean) ||
-    /pinterest\.com\/pin\//i.test(clean)
-  ) {
-    return 'pinterest';
-  }
-
-  // Twitter / X: handles twitter.com, x.com, mobile.twitter.com, t.co, /i/status/, etc.
-  if (
-    /(?:twitter|x)\.com\/(?:[^/]+\/status(?:es)?\/\d+|i\/status\/\d+)/i.test(clean) ||
-    /t\.co\/[A-Za-z0-9_-]+/i.test(clean)
-  ) {
-    return 'twitter';
-  }
-
-  return null;
 }
 
 /** Generate a unique filename */
@@ -162,32 +117,11 @@ export async function downloadMedia(
   rawCdnUrl: string,
   mediaType: 'video' | 'image' | 'audio',
   onProgress?: (p: DownloadProgress) => void,
+  customFilename?: string,
 ): Promise<DownloadResult> {
   try {
-    let cdnUrl = rawCdnUrl;
-    if (cdnUrl.includes('token=')) {
-      try {
-        const token = cdnUrl.split('token=')[1]?.split('&')[0];
-        if (token) {
-          const parts = token.split('.');
-          if (parts.length >= 2) {
-            let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-            while (b64.length % 4 !== 0) b64 += '=';
-            const decodedStr = typeof atob === 'function' ? atob(b64) : '';
-            if (decodedStr) {
-              const parsed = JSON.parse(decodedStr);
-              if (parsed?.url) {
-                cdnUrl = parsed.url;
-              }
-            }
-          }
-        }
-      } catch {
-        /* continue with cdnUrl */
-      }
-    }
-
-    const filename = makeFilename(cdnUrl, mediaType);
+    const cdnUrl = resolveDirectMediaUrl(rawCdnUrl);
+    const filename = customFilename || makeFilename(cdnUrl, mediaType);
     const cacheRoot = cacheDirectory ?? documentDirectory;
     if (!cacheRoot) {
       return { ok: false, error: 'Local cache storage is unavailable on this device.' };
@@ -220,6 +154,36 @@ export async function downloadMedia(
             'This usually means the stream URL expired between extraction and download. ' +
             'Please tap the URL box, press Fetch again, then Download immediately.',
       };
+    }
+
+    // Guard against servers returning HTML challenge/error pages disguised as media
+    if (size > 0 && size < 50000) {
+      try {
+        const preview = await readAsStringAsync(downloadedUri, {
+          encoding: EncodingType.UTF8,
+          length: 500,
+        });
+        if (
+          preview.includes('<!DOCTYPE') ||
+          preview.includes('<html') ||
+          preview.includes('<head') ||
+          preview.includes('Cloudflare') ||
+          preview.includes('Access denied') ||
+          preview.includes('challenge-platform') ||
+          preview.includes('cf-browser-verification') ||
+          preview.includes('{"error"')
+        ) {
+          await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
+          return {
+            ok: false,
+            error:
+              'The download server returned a verification/bot challenge page instead of media.\n\n' +
+              'This YouTube video stream is restricted. Please select another quality or video.',
+          };
+        }
+      } catch {
+        // Binary media file (expected for video/audio)
+      }
     }
 
     // ── Save to Gallery, Custom SAF folder, or fallback to share sheet ───────

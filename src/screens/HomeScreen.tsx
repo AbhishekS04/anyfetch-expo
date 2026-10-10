@@ -1,28 +1,17 @@
 /**
- * HomeScreen — Expo Go + Android SDK 56
- *
- * Implements a premium BlackHole music app dark aesthetic UI:
- *  - Immersive custom header with Info modal and Settings navigation
- *  - Central glowing "Black Hole" circle button with double pulsing wave rings
- *  - Dynamic platform color glows per platform
- *  - Static (non-scrollable) idle layout
- *  - Glassmorphic manual TextInput
- *  - Premium horizontal Recent History cards with chip-filter tabs
- *  - Immersive Result screen featuring rounded media preview and solid action buttons
+ * HomeScreen.tsx — anyfetch Universal Media Downloader
+ * Modular orchestrator screen for Instagram, YouTube, Pinterest, and Twitter/X.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
-  AppState,
-  Dimensions,
   Easing,
-  FlatList,
+  BackHandler,
   Image,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -33,124 +22,172 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {
-  documentDirectory,
-  getInfoAsync,
-  readAsStringAsync,
-  writeAsStringAsync,
-} from 'expo-file-system/legacy';
-import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useVideoPlayer, VideoView } from 'expo-video';
-import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useVideoPlayer } from 'expo-video';
+import {
+  XCircle,
+  AlertCircle,
+  CheckCircle,
+  Download,
+} from 'reicon-react-native';
+import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { useEvent } from 'expo';
 
-import { extractInstagram, IgExtractResult, IgMediaItem } from '../extractors/instagram';
-import { extractPinterest, PtExtractResult } from '../extractors/pinterest';
-import { extractTwitter, TwExtractResult } from '../extractors/twitter';
-import { detectPlatform, downloadMedia, DownloadProgress, extractUrlFromText } from '../utils/download';
 import { checkForGitHubUpdate, GitHubReleaseInfo } from '../services/githubUpdate';
+import { detectPlatform, downloadMedia, DownloadProgress, extractUrlFromText } from '../utils/download';
+import { extractMedia, ExtractedMediaItem, ExtractedResult } from '../extractors';
+import { getPlatformTheme } from '../theme/platformColors';
+import { useClipboardDetection } from '../hooks/useClipboardDetection';
+import { useDownloadHistory, HistoryItem } from '../hooks/useDownloadHistory';
+
+import ClipboardBanner from '../components/home/ClipboardBanner';
+import HistorySection from '../components/home/HistorySection';
+import QualitySelector from '../components/home/QualitySelector';
+import CarouselSwiper from '../components/home/CarouselSwiper';
+import CustomVideoPlayer from '../components/player/CustomVideoPlayer';
+import ProgressBar from '../components/common/ProgressBar';
 import UpdateModal from '../components/UpdateModal';
-
-const { width: W, height: H } = Dimensions.get('window');
-// Persistent file path for recent download history (no native module needed)
-const HISTORY_FILE = (documentDirectory ?? '') + 'download_history.json';
-
-const CARD_WIDTH = W - 90;
-const CARD_GAP = 12;
-const CARD_PADDING = (W - CARD_WIDTH) / 2; // 45
+import BottomTabBar from '../components/navigation/BottomTabBar';
+import FloatingMenu from '../components/navigation/FloatingMenu';
+import { useCascadeNavigation } from '../components/navigation/CascadePageTransition';
+import { useAppTheme } from '../theme/ThemeContext';
+import { ShaderBackground } from '../components/theme/ShaderBackground';
+import { Orb, type OrbVariant } from '../components/theme/Orb';
+import { DEFAULT_THEME } from '../theme/platformColors';
+import { FONTS } from '../theme/typography';
 
 type AppPhase = 'idle' | 'loading' | 'result' | 'error';
 
-interface CarouselItem extends IgMediaItem {
-  index: number;
-  selected: boolean;
-}
-
-type SupportedPlatform =
-  | 'instagram'
-  | 'pinterest'
-  | 'twitter';
-
-type HistoryFilter = 'all' | SupportedPlatform;
-
-interface HistoryItem {
-  url: string;
-  platform: SupportedPlatform;
-  singleResult: {
-    type: 'video' | 'image';
-    url: string;
-    thumbnail?: string;
-    hlsNote?: string;
-    title?: string;
-  } | null;
-  carouselItems: CarouselItem[];
-}
-
-const formatTime = (secs: number) => {
-  if (isNaN(secs) || secs < 0) return '00:00';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-};
-
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
+  const { navigateWithCascade } = useCascadeNavigation();
+  const { colors: appColors, appliedTheme } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<AppPhase>('idle');
   const [urlInput, setUrlInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [singleResult, setSingleResult] = useState<{
-    type: 'video' | 'image';
-    url: string;
-    thumbnail?: string;
-    hlsNote?: string;
-    title?: string;
-  } | null>(null);
-  const [carouselItems, setCarouselItems] = useState<CarouselItem[]>([]);
+
+  // Detect whether surrounding background shader is light (e.g. Ghost light)
+  // to dynamically activate deeper contrasting stops and ambient occlusion
+  const isLightBackground = useMemo(() => {
+    if (!appliedTheme) return false;
+    if (
+      appliedTheme.id === 'ghost-light' ||
+      appliedTheme.label?.toLowerCase().includes('ghost')
+    ) {
+      return true;
+    }
+    const main = appliedTheme.tones?.main;
+    if (main) {
+      const lum = 0.299 * main[0] + 0.587 * main[1] + 0.114 * main[2];
+      return lum > 0.58;
+    }
+    return false;
+  }, [appliedTheme]);
+
+  const [orbPreset, setOrbPreset] = useState<OrbVariant>('adaptive');
+  const cycleOrbPreset = useCallback(() => {
+    const sequence: OrbVariant[] = ['adaptive', 'bloom', 'glass', 'ember', 'drop'];
+    setOrbPreset(prev => {
+      const idx = sequence.indexOf(prev);
+      return sequence[(idx + 1) % sequence.length];
+    });
+  }, []);
+
+  // Media Result State
+  const [singleResult, setSingleResult] = useState<ExtractedResult | null>(null);
+  const [selectedQuality, setSelectedQuality] = useState<string>('720p');
+  const [carouselItems, setCarouselItems] = useState<ExtractedMediaItem[]>([]);
+
+  // Download State
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [infoVisible, setInfoVisible] = useState(false);
-  const [controlsActive, setControlsActive] = useState(true);
-  const controlsOpacity = useRef(new Animated.Value(1)).current;
-  const [isLooping, setIsLooping] = useState(true);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const seekerWidthRef = useRef(0);
-  const scrollX = useRef(new Animated.Value(0)).current;
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const buttonColorAnim = useRef(new Animated.Value(0)).current;
 
-  // ── Clipboard auto-detect banner state ──────────────────────────────
-  const [detectedClipboardUrl, setDetectedClipboardUrl] = useState<string | null>(null);
-  const lastDismissedClipboardRef = useRef<string>('');
-  const clipboardAnim = useRef(new Animated.Value(0)).current;
-
-  const showClipboardBanner = useCallback((url: string) => {
-    setDetectedClipboardUrl(url);
-    Animated.spring(clipboardAnim, {
-      toValue: 1,
-      tension: 60,
-      friction: 8,
-      useNativeDriver: true,
-    }).start();
-  }, [clipboardAnim]);
-
-  const hideClipboardBanner = useCallback(() => {
-    Animated.timing(clipboardAnim, {
-      toValue: 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start(() => {
-      setDetectedClipboardUrl(null);
-    });
-  }, [clipboardAnim]);
-
-  // ── GitHub Releases In-App APK Updater state ──────────────────────
+  // Modals
   const [githubRelease, setGithubRelease] = useState<GitHubReleaseInfo | null>(null);
   const [updateModalVisible, setUpdateModalVisible] = useState(false);
 
+  // Custom Hooks
+  const {
+    detectedUrl,
+    detectedPlatform,
+    animValue: clipboardAnim,
+    hideBanner: hideClipboardBanner,
+    checkClipboard,
+  } = useClipboardDetection();
+
+  const {
+    history,
+    filter: historyFilter,
+    setFilter: setHistoryFilter,
+    filteredItems: historyFilteredItems,
+    addHistoryItem,
+    removeHistoryItem,
+  } = useDownloadHistory();
+
+  // Screen transition animations
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  const transitionToPhase = useCallback((newPhase: AppPhase, updateState?: () => void) => {
+    Animated.timing(fadeAnim, {
+      toValue: 0,
+      duration: 140,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start(() => {
+      if (updateState) updateState();
+      setPhase(newPhase);
+
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [fadeAnim]);
+
+  // Ref tracking URL input to prevent stale closure in circle button
+  const urlInputRef = useRef('');
+  useEffect(() => {
+    urlInputRef.current = urlInput;
+  }, [urlInput]);
+
+  const platform = detectPlatform(urlInput);
+  const platformTheme = getPlatformTheme(platform);
+  const themeColors = platform
+    ? platformTheme
+    : {
+        ...DEFAULT_THEME,
+        primary: appColors.accent || DEFAULT_THEME.primary,
+        glow: appColors.accentGlow || DEFAULT_THEME.glow,
+        glowLight: appColors.accentGlowLight || DEFAULT_THEME.glowLight,
+      };
+
+  // Video Player instance
+  const videoPlayer = useVideoPlayer('', p => {
+    p.loop = true;
+    p.timeUpdateEventInterval = 0.25;
+  });
+
+  // Keep video source synced with media result
+  useEffect(() => {
+    if (singleResult?.type === 'video' && singleResult.url) {
+      if (typeof (videoPlayer as any).replaceAsync === 'function') {
+        (videoPlayer as any).replaceAsync(singleResult.url).catch(() => {});
+      } else {
+        videoPlayer.replace(singleResult.url);
+      }
+      videoPlayer.play();
+    } else {
+      videoPlayer.pause();
+    }
+  }, [singleResult, videoPlayer]);
+
+  // Check for GitHub Release updates on mount
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -160,341 +197,47 @@ export default function HomeScreen() {
           setGithubRelease(release);
           setUpdateModalVisible(true);
         }
-      } catch (err) {
-        console.warn('[GitHub Updater] Auto-check error:', err);
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  // History filter chip
-  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
-
-  // historyReady flips to true after the initial disk read finishes.
-  // It MUST be useState (not useRef) — only state changes re-trigger effects.
-  const [historyReady, setHistoryReady] = useState(false);
-
-  // ── Load saved history from disk once on mount ─────────────────────
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!documentDirectory) return; // safety: no FS available
-        const info = await getInfoAsync(HISTORY_FILE);
-        if (info.exists) {
-          const raw = await readAsStringAsync(HISTORY_FILE);
-          const parsed = JSON.parse(raw) as HistoryItem[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setHistory(parsed);
-          }
-        }
       } catch {
-        // corrupt / missing file — start fresh, no crash
-      } finally {
-        setHistoryReady(true); // ← triggers save effect to run correctly
+        // silent fallback
       }
     })();
-  }, []);
-
-  // ── Persist every change to disk ───────────────────────────────────
-  // Depends on both `history` and `historyReady` so it runs when either
-  // changes. The guard stops it writing an empty array before load finishes.
-  useEffect(() => {
-    if (!historyReady) return;
-    writeAsStringAsync(HISTORY_FILE, JSON.stringify(history)).catch(() => {});
-  }, [history, historyReady]);
-
-
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  const transitionToPhase = useCallback((newPhase: AppPhase, updateState?: () => void) => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 160,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 12,
-        duration: 160,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(scaleAnim, {
-        toValue: 0.96,
-        duration: 160,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      if (updateState) updateState();
-      setPhase(newPhase);
-
-      slideAnim.setValue(-12);
-      scaleAnim.setValue(0.97);
-
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 220,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.spring(slideAnim, {
-          toValue: 0,
-          tension: 70,
-          friction: 9,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          tension: 70,
-          friction: 9,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    });
-  }, [fadeAnim, slideAnim, scaleAnim]);
-
-  // Use a ref so circle button always has the latest urlInput without stale closure
-  const urlInputRef = useRef('');
-  useEffect(() => {
-    urlInputRef.current = urlInput;
-  }, [urlInput]);
-
-  const platform = detectPlatform(urlInput);
-  const detectedPlatform = detectedClipboardUrl ? detectPlatform(detectedClipboardUrl) : null;
-
-  // ── Colors based on active platform ──────────────────────────────────────
-  const getPlatformColors = () => {
-    if (platform === 'instagram') return { primary: '#E1306C', glow: 'rgba(225,48,108,0.25)', glowLight: 'rgba(225,48,108,0.08)' };
-    if (platform === 'pinterest') return { primary: '#E60023', glow: 'rgba(230,0,35,0.25)', glowLight: 'rgba(230,0,35,0.08)' };
-    if (platform === 'twitter')   return { primary: '#1D9BF0', glow: 'rgba(29,155,240,0.25)', glowLight: 'rgba(29,155,240,0.08)' };
-    if (urlInput.trim().length > 0) return { primary: '#FF9F0A', glow: 'rgba(255,159,10,0.25)', glowLight: 'rgba(255,159,10,0.08)' };
-    return { primary: '#333333', glow: 'rgba(255,255,255,0.06)', glowLight: 'rgba(255,255,255,0.02)' };
-  };
-
-  const themeColors = getPlatformColors();
-
-  const btnBgColor = buttonColorAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [themeColors.primary, '#34C759'],
-  });
-
-  // ── Breathing / Pulsing event horizon animation ─────────────────────────
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.15, duration: 1200, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
-      ])
-    );
-    anim.start();
-    return () => anim.stop();
-  }, [pulseAnim]);
-
-  // ── Video player ─────────────────────────────────────────────────────────
-  const videoPlayer = useVideoPlayer('', p => {
-    p.loop = true;
-    p.timeUpdateEventInterval = 0.25;
-  });
-
-  const playingEvent = useEvent(videoPlayer, 'playingChange', { isPlaying: videoPlayer.playing });
-  const isPlaying = playingEvent ? playingEvent.isPlaying : videoPlayer.playing;
-
-  const timeUpdateEvent = useEvent(videoPlayer, 'timeUpdate', {
-    currentTime: videoPlayer.currentTime,
-    currentLiveTimestamp: null,
-    currentOffsetFromLive: null,
-    bufferedPosition: 0,
-  });
-  const currentTime = timeUpdateEvent ? timeUpdateEvent.currentTime : videoPlayer.currentTime;
-
-  const mutedEvent = useEvent(videoPlayer, 'mutedChange', { muted: videoPlayer.muted });
-  const isMuted = mutedEvent ? mutedEvent.muted : videoPlayer.muted;
-
-  const showControlsAndResetTimeout = useCallback((forcePlaying?: boolean) => {
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
-    }
-    setControlsActive(true);
-    Animated.timing(controlsOpacity, {
-      toValue: 1,
-      duration: 250,
-      useNativeDriver: true,
-    }).start();
-
-    const isActuallyPlaying = forcePlaying !== undefined ? forcePlaying : videoPlayer.playing;
-    if (isActuallyPlaying) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        setControlsActive(false);
-        Animated.timing(controlsOpacity, {
-          toValue: 0,
-          duration: 350,
-          useNativeDriver: true,
-        }).start();
-      }, 2000);
-    }
-  }, [videoPlayer, controlsOpacity]);
-
-  useEffect(() => {
     return () => {
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current);
-      }
+      mounted = false;
     };
   }, []);
 
-  // Sync controls visibility with playback state
-  useEffect(() => {
-    if (isPlaying) {
-      showControlsAndResetTimeout(true);
-    } else {
-      setControlsActive(true);
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current);
-      }
-      Animated.timing(controlsOpacity, {
-        toValue: 1,
-        duration: 250,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isPlaying, showControlsAndResetTimeout, controlsOpacity]);
-
-  const togglePlayPause = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const nextPlaying = !isPlaying;
-    if (isPlaying) {
-      videoPlayer.pause();
-    } else {
-      videoPlayer.play();
-    }
-    showControlsAndResetTimeout(nextPlaying);
-  }, [isPlaying, videoPlayer, showControlsAndResetTimeout]);
-
-  const toggleMute = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    videoPlayer.muted = !videoPlayer.muted;
-    showControlsAndResetTimeout(isPlaying);
-  }, [videoPlayer, isPlaying, showControlsAndResetTimeout]);
-
-  const toggleLoop = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const nextLoop = !isLooping;
-    setIsLooping(nextLoop);
-    videoPlayer.loop = nextLoop;
-    showControlsAndResetTimeout(isPlaying);
-  }, [isLooping, isPlaying, videoPlayer, showControlsAndResetTimeout]);
-
-  const handleVideoPress = useCallback(() => {
-    if (!controlsActive) {
-      showControlsAndResetTimeout(isPlaying);
-    } else {
-      setControlsActive(false);
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current);
-      }
-      Animated.timing(controlsOpacity, {
-        toValue: 0,
-        duration: 250,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [controlsActive, isPlaying, showControlsAndResetTimeout]);
-
-  const skipBackward = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - 5);
-    showControlsAndResetTimeout(isPlaying);
-  }, [videoPlayer, isPlaying, showControlsAndResetTimeout]);
-
-  const skipForward = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    videoPlayer.currentTime = Math.min(videoPlayer.duration, videoPlayer.currentTime + 5);
-    showControlsAndResetTimeout(isPlaying);
-  }, [videoPlayer, isPlaying, showControlsAndResetTimeout]);
-
-  const handleSeek = useCallback((event: any) => {
-    const { locationX } = event.nativeEvent;
-    const duration = videoPlayer.duration || 0;
-    if (seekerWidthRef.current > 0 && duration > 0) {
-      const newPct = Math.max(0, Math.min(1, locationX / seekerWidthRef.current));
-      videoPlayer.currentTime = newPct * duration;
-      showControlsAndResetTimeout(isPlaying);
-    }
-  }, [videoPlayer, isPlaying, showControlsAndResetTimeout]);
-
-  // Reset activeIndex when carouselItems length changes
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [carouselItems.length]);
-
-  const handleScroll = useCallback((event: any) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    const interval = CARD_WIDTH + CARD_GAP;
-    const index = Math.round(offsetX / interval);
-    const clampedIndex = Math.max(0, Math.min(carouselItems.length - 1, index));
-    if (clampedIndex !== activeIndex) {
-      setActiveIndex(clampedIndex);
-    }
-  }, [activeIndex, carouselItems.length]);
-
-
-
-  useEffect(() => {
-    if (singleResult?.type === 'video' && singleResult.url) {
-      videoPlayer.replace(singleResult.url);
-      videoPlayer.play();
-    } else if (carouselItems.length > 0) {
-      const activeItem = carouselItems[activeIndex];
-      if (activeItem && activeItem.type === 'video') {
-        videoPlayer.replace(activeItem.url);
-        videoPlayer.play();
-      } else {
-        videoPlayer.pause();
-      }
-    } else {
-      videoPlayer.pause();
-    }
-  }, [singleResult, carouselItems, activeIndex, videoPlayer]);
-
-  // ── When urlInput changes while viewing result → reset to idle ───────────
-  const prevUrlRef = useRef('');
-  useEffect(() => {
-    if (prevUrlRef.current !== urlInput && phase === 'result') {
-      transitionToPhase('idle', () => {
-        setSingleResult(null);
-        setCarouselItems([]);
-        setErrorMsg('');
-      });
-    }
-    prevUrlRef.current = urlInput;
-  }, [urlInput, phase, transitionToPhase]);
-
-  // ── Clipboard auto-detect ────────────────────────────────────────────────
-  const checkClipboard = useCallback(async () => {
+  const handleManualCheckUpdate = async () => {
     try {
-      const text = await Clipboard.getStringAsync();
-      if (!text?.trim()) return;
-      const cleanUrl = extractUrlFromText(text.trim());
-      const p = detectPlatform(cleanUrl);
-      if (
-        p &&
-        cleanUrl !== urlInputRef.current &&
-        cleanUrl !== lastDismissedClipboardRef.current &&
-        cleanUrl !== detectedClipboardUrl
-      ) {
-        showClipboardBanner(cleanUrl);
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const release = await checkForGitHubUpdate();
+      if (release.isAvailable) {
+        setGithubRelease(release);
+        setUpdateModalVisible(true);
+      } else {
+        Alert.alert('Up to Date', `AnyFetch v${release.currentVersion} is the latest version.`);
       }
     } catch {
-      /* ignore */
+      Alert.alert('Update Check Failed', 'Could not reach GitHub releases at this time.');
     }
-  }, [detectedClipboardUrl, showClipboardBanner]);
+  };
+
+  // Android Share Intent listener
+  useEffect(() => {
+    const handleUrl = (event: { url: string }) => {
+      if (!event.url) return;
+      const detected = extractUrlFromText(event.url);
+      if (detected && detectPlatform(detected)) {
+        setUrlInput(detected);
+        handleExtract(detected);
+      }
+    };
+
+    Linking.getInitialURL().then(initial => {
+      if (initial) handleUrl({ url: initial });
+    });
+
+    const sub = Linking.addEventListener('url', handleUrl);
+    return () => sub.remove();
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -502,228 +245,129 @@ export default function HomeScreen() {
     }, [checkClipboard])
   );
 
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        checkClipboard();
-      }
-    });
-    return () => {
-      sub.remove();
-    };
-  }, [checkClipboard]);
+  // ── Media Extraction ───────────────────────────────────────────────────────
+  const handleExtract = useCallback(
+    async (overrideUrl?: string) => {
+      hideClipboardBanner();
+      const raw = (overrideUrl ?? urlInputRef.current).trim();
+      const activeUrl = extractUrlFromText(raw);
+      const activePlatform = detectPlatform(activeUrl);
 
-  // ── Extract ──────────────────────────────────────────────────────────────
-  const handleExtract = useCallback(async (overrideUrl?: string) => {
-    hideClipboardBanner();
-    const raw = (overrideUrl ?? urlInputRef.current).trim();
-    const activeUrl = extractUrlFromText(raw);
-    const activePlatform = detectPlatform(activeUrl);
-
-    if (!activeUrl || !activePlatform) {
-      Alert.alert('No link', 'Copy any Instagram, Pinterest, or Twitter/X link first.');
-      return;
-    }
-
-    setPhase('loading');
-    setSingleResult(null);
-    setCarouselItems([]);
-    setErrorMsg('');
-
-    try {
-      let extractedSingle: {
-        type: 'video' | 'image';
-        url: string;
-        thumbnail?: string;
-        hlsNote?: string;
-        title?: string;
-      } | null = null;
-      let extractedCarousel: CarouselItem[] = [];
-
-      if (activePlatform === 'instagram') {
-        const ig: IgExtractResult = await extractInstagram(activeUrl);
-        if (ig.type === 'carousel') {
-          extractedCarousel = ig.items.map((item, i) => ({ ...item, index: i, selected: false }));
-          setCarouselItems(extractedCarousel);
-        } else {
-          extractedSingle = { type: ig.items[0].type as 'video' | 'image', url: ig.items[0].url, thumbnail: ig.items[0].thumbnail };
-          setSingleResult(extractedSingle);
-        }
-      } else if (activePlatform === 'twitter') {
-        const tw: TwExtractResult = await extractTwitter(activeUrl);
-        if (tw.items.length > 1) {
-          extractedCarousel = tw.items.map((item, i) => ({ ...item, index: i, selected: false }));
-          setCarouselItems(extractedCarousel);
-        } else if (tw.items.length === 1) {
-          extractedSingle = { type: tw.items[0].type as 'video' | 'image', url: tw.items[0].url, thumbnail: tw.items[0].thumbnail };
-          setSingleResult(extractedSingle);
-        } else {
-          throw new Error('Twitter: no media found in this tweet.');
-        }
-      } else if (activePlatform === 'pinterest') {
-        const pt: PtExtractResult = await extractPinterest(activeUrl);
-        if (pt.type === 'video_hls') {
-          extractedSingle = { type: 'image', url: pt.thumbnail ?? '', thumbnail: pt.thumbnail, hlsNote: pt.hlsNote };
-        } else {
-          extractedSingle = { type: pt.type as 'video' | 'image', url: pt.url ?? '', thumbnail: pt.thumbnail };
-        }
-        setSingleResult(extractedSingle);
-      } else {
-        throw new Error('Unsupported platform');
+      if (!activeUrl || !activePlatform) {
+        Alert.alert('No link', 'Copy any Instagram, YouTube, TikTok, Reddit, Pinterest, or Twitter/X link first.');
+        return;
       }
 
-      setHistory(prev => {
-        const filtered = prev.filter(h => h.url !== activeUrl);
-        return [
-          { url: activeUrl, platform: activePlatform, singleResult: extractedSingle, carouselItems: extractedCarousel },
-          ...filtered,
-        ].slice(0, 20);
-      });
+      setPhase('loading');
+      setErrorMsg('');
 
-      transitionToPhase('result');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      transitionToPhase('error', () => { setErrorMsg(e?.message ?? 'Something went wrong'); });
-    }
-  }, [hideClipboardBanner, transitionToPhase]);
-
-  // ── Deep Linking / Shared Intent Receiver ──────────────────────────────────
-  useEffect(() => {
-    const handleUrl = (event: { url: string }) => {
-      const url = event.url;
-      if (!url) return;
       try {
-        let extractedText = url;
-        if (url.startsWith('anyfetch://share?text=')) {
-          const raw = url.replace('anyfetch://share?text=', '');
-          extractedText = decodeURIComponent(raw);
-        } else if (url.includes('?text=')) {
-          const parts = url.split('?text=');
-          if (parts[1]) extractedText = decodeURIComponent(parts[1]);
+        const extracted = await extractMedia(activeUrl);
+
+        if (extracted.type === 'carousel' && extracted.carouselItems && extracted.carouselItems.length > 0) {
+          setSingleResult(null);
+          setCarouselItems(extracted.carouselItems);
+        } else {
+          setSingleResult(extracted);
+          setCarouselItems([]);
+          if (extracted.qualities && extracted.qualities.length > 0) {
+            setSelectedQuality(extracted.qualities[0].id);
+          }
         }
-        const cleanUrl = extractUrlFromText(extractedText);
-        if (cleanUrl && detectPlatform(cleanUrl)) {
-          hideClipboardBanner();
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setUrlInput(cleanUrl);
-          handleExtract(cleanUrl);
-        }
-      } catch (err) {
-        console.warn('[Linking] Failed to parse incoming URL:', err);
-      }
-    };
 
-    Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl) {
-        handleUrl({ url: initialUrl });
-      }
-    });
-
-    const sub = Linking.addEventListener('url', handleUrl);
-    return () => {
-      sub.remove();
-    };
-  }, [handleExtract, hideClipboardBanner]);
-
-  // ── Download ─────────────────────────────────────────────────────────────
-  const doDownload = useCallback(async (url: string, type: 'video' | 'image' | 'audio') => {
-    if (!url || downloadSuccess) return;
-    setDownloading(true);
-    setProgress(null);
-    const result = await downloadMedia(url, type, p => setProgress(p));
-    setDownloading(false);
-    setProgress(null);
-    if (result.ok) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setDownloadSuccess(true);
-      Animated.timing(buttonColorAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: false,
-      }).start();
-
-      setTimeout(() => {
-        Animated.timing(buttonColorAnim, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: false,
-        }).start(() => {
-          setDownloadSuccess(false);
+        // Add to history
+        addHistoryItem({
+          url: activeUrl,
+          platform: activePlatform,
+          singleResult: extracted.type === 'carousel' ? null : extracted,
+          carouselItems: extracted.carouselItems || [],
         });
-      }, 9500); // 10s total cooldown
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Download failed', result.error ?? 'Unknown error');
-    }
-  }, [downloadSuccess]);
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        transitionToPhase('result');
+      } catch (err: any) {
+        const msg = err?.message || 'Could not fetch media. Check your network or try again.';
+        setErrorMsg(msg);
+        setPhase('error');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      }
+    },
+    [addHistoryItem, hideClipboardBanner, transitionToPhase]
+  );
+
+  // ── Download Execution ─────────────────────────────────────────────────────
+  const doDownload = useCallback(
+    async (url: string, type: 'video' | 'image' | 'audio', customFilename?: string) => {
+      if (!url || downloadSuccess) return;
+      setDownloading(true);
+      setProgress(null);
+      const result = await downloadMedia(url, type, p => setProgress(p), customFilename);
+      setDownloading(false);
+      setProgress(null);
+
+      if (result.ok) {
+        setDownloadSuccess(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        Animated.timing(buttonColorAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: false,
+        }).start();
+
+        setTimeout(() => {
+          setDownloadSuccess(false);
+          buttonColorAnim.setValue(0);
+        }, 3000);
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        Alert.alert('Download Failed', result.error ?? 'Unknown error occurred.');
+      }
+    },
+    [downloadSuccess, buttonColorAnim]
+  );
 
   const downloadCarouselSelected = useCallback(async () => {
-    const selected = carouselItems.filter(i => i.selected);
-    if (!selected.length || downloadSuccess) {
-      Alert.alert('Select items first');
+    const toDownload = carouselItems.filter(i => i.selected);
+    if (toDownload.length === 0) {
+      Alert.alert('Select items', 'Choose at least one item from the carousel.');
       return;
     }
+
     setDownloading(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setProgress(null);
     let successCount = 0;
-    for (const item of selected) {
-      const res = await downloadMedia(item.url, item.type, p => setProgress(p));
+
+    for (const item of toDownload) {
+      const res = await downloadMedia(item.url, item.type);
       if (res.ok) successCount++;
     }
+
     setDownloading(false);
-    setProgress(null);
-
-    if (successCount > 0) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (successCount === toDownload.length) {
       setDownloadSuccess(true);
-      Animated.timing(buttonColorAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: false,
-      }).start();
-
-      setTimeout(() => {
-        Animated.timing(buttonColorAnim, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: false,
-        }).start(() => {
-          setDownloadSuccess(false);
-        });
-      }, 9500); // 10s total cooldown
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setTimeout(() => setDownloadSuccess(false), 3000);
     } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Download failed', 'None of the selected items could be downloaded.');
+      Alert.alert('Download Incomplete', `Saved ${successCount} of ${toDownload.length} items.`);
     }
-  }, [carouselItems, downloadSuccess]);
+  }, [carouselItems]);
 
-  const allSelected = carouselItems.length > 0 && carouselItems.every(i => i.selected);
-  const selectedCount = carouselItems.filter(i => i.selected).length;
-
-  const toggleSelectAll = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setCarouselItems(prev => prev.map(i => ({ ...i, selected: !allSelected })));
-  }, [allSelected]);
-
+  // Reset to idle screen
   const reset = useCallback(() => {
+    videoPlayer.pause();
     transitionToPhase('idle', () => {
+      setUrlInput('');
       setSingleResult(null);
       setCarouselItems([]);
       setErrorMsg('');
-      setDownloading(false);
-      setProgress(null);
       setDownloadSuccess(false);
       buttonColorAnim.setValue(0);
-      setControlsActive(true);
-      controlsOpacity.setValue(1);
     });
-  }, [transitionToPhase, controlsOpacity]);
+  }, [videoPlayer, transitionToPhase, buttonColorAnim]);
 
-  // ── Circle button handler — reads from clipboard / ref ────────────────────
+  // Circle button press action
   const handleCirclePress = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (detectedClipboardUrl) hideClipboardBanner();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     try {
       const rawText = (await Clipboard.getStringAsync())?.trim();
       const cleanUrl = extractUrlFromText(rawText);
@@ -736,265 +380,191 @@ export default function HomeScreen() {
         handleExtract(urlInputRef.current);
       } else if (cleanUrl) {
         setUrlInput(cleanUrl);
-        Alert.alert('Unsupported Link', 'Please copy an Instagram, Pinterest, or Twitter/X link.');
+        Alert.alert('Unsupported Link', 'Please copy a YouTube, Instagram, TikTok, Reddit, Pinterest, or Twitter/X link.');
       } else {
-        Alert.alert('No Link Copied', 'Copy an Instagram, Pinterest, or Twitter/X link, then tap the circle to download.');
+        Alert.alert('No Link Copied', 'Copy any supported link, then tap the circle to download.');
       }
     } catch {
       if (urlInputRef.current && detectPlatform(urlInputRef.current)) {
         handleExtract(urlInputRef.current);
-      } else {
-        Alert.alert('No Link Copied', 'Copy an Instagram, Pinterest, or Twitter/X link, then tap the circle to download.');
       }
     }
-  }, [detectedClipboardUrl, handleExtract, hideClipboardBanner]);
+  }, [handleExtract]);
 
-  // ── Render Helpers ───────────────────────────────────────────────────────
+  const handleSelectHistoryItem = useCallback((item: HistoryItem) => {
+    setUrlInput(item.url);
+    if (item.singleResult) {
+      setSingleResult(item.singleResult);
+      setCarouselItems([]);
+    } else if (item.carouselItems) {
+      setSingleResult(null);
+      setCarouselItems(item.carouselItems);
+    }
+    transitionToPhase('result');
+  }, [transitionToPhase]);
+
+  const btnBgColor = buttonColorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [themeColors.primary, '#30D158'],
+  });
+
   const isIdle = phase === 'idle' || phase === 'error';
   const isResult = phase === 'result';
   const isLoading = phase === 'loading';
+
+  useEffect(() => {
+    const handleHardwareBack = () => {
+      if (isResult) {
+        reset();
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', handleHardwareBack);
+    return () => sub.remove();
+  }, [isResult, reset]);
 
   return (
     <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
-      {/* ═══ CUSTOM IMMERSIVE HEADER ═══ */}
-      <View style={s.header}>
-        {isResult ? (
-          <Pressable style={s.headerLeft} onPress={reset} hitSlop={12}>
-            <Ionicons name="chevron-back" size={24} color="#FF9F0A" />
-            <Text style={s.headerBackText}>Back</Text>
-          </Pressable>
-        ) : (
-          <Pressable style={s.headerLeft} onPress={() => setInfoVisible(true)} hitSlop={12}>
-            <Ionicons name="information-circle-outline" size={24} color="#8E8E93" />
-          </Pressable>
-        )}
+      {/* ═══ LIVE ATMOSPHERIC WEBGL SHADER BACKGROUND ═══ */}
+      <ShaderBackground
+        theme={appliedTheme}
+        overlayOpacity={0.20}
+        style={StyleSheet.absoluteFill}
+      />
 
-        <Text style={s.headerTitle}>{isResult ? 'PREVIEW' : 'ANYFETCH'}</Text>
-
-        {!isResult && (
-          <Pressable
-            style={s.headerRight}
-            onPress={() => navigation.navigate('Settings')}
-            hitSlop={12}>
-            <Ionicons name="settings-outline" size={22} color="#8E8E93" />
-          </Pressable>
-        )}
-        {isResult && <View style={s.headerRightDummy} />}
-      </View>
+      {/* ═══ FLOATING MENU HEADER ═══ */}
+      <FloatingMenu
+        title={
+          isResult ? (
+            <Text style={s.floatingMenuTitle}>PREVIEW</Text>
+          ) : (
+            <View style={s.brandBadge}>
+              <View style={[s.brandDot, { backgroundColor: appColors.accent }]} />
+              <Text style={s.floatingMenuTitle}>ANYFETCH</Text>
+            </View>
+          )
+        }
+        backButton={isResult ? { label: 'Back', onPress: reset } : undefined}
+        primaryLinks={[
+          {
+            label: 'Fetch Media',
+            onPress: () => {
+              if (isResult) reset();
+            },
+          },
+          {
+            label: 'Downloads Showcase',
+            onPress: () => navigateWithCascade('Downloads'),
+          },
+          {
+            label: 'Theme Studio (Arc Dial)',
+            onPress: () => navigateWithCascade('Theme'),
+          },
+          {
+            label: 'Settings',
+            onPress: () => navigateWithCascade('Settings'),
+          },
+        ]}
+        secondaryLinks={[
+          {
+            label: 'Check for Updates',
+            onPress: handleManualCheckUpdate,
+          },
+          {
+            label: 'About AnyFetch',
+            onPress: () => navigateWithCascade('About'),
+          },
+        ]}
+        socialLinks={[
+          {
+            label: 'Twitter / X (@abhi3hekk)',
+            href: 'https://x.com/abhi3hekk',
+          },
+          {
+            label: 'GitHub Repository',
+            href: 'https://github.com/AbhishekS04/anyfetch-expo',
+          },
+          {
+            label: 'Report an Issue',
+            href: 'https://github.com/AbhishekS04/anyfetch-expo/issues',
+          },
+        ]}
+      />
 
       <Animated.View
         style={[
           s.mainWrapper,
           {
             opacity: fadeAnim,
-            transform: [
-              { translateY: slideAnim },
-              { scale: scaleAnim },
-            ],
           },
         ]}>
         {/* ═══ IDLE / INPUT PHASE ═══ */}
         {(isIdle || isLoading) && (
           <ScrollView
             style={s.idleContainer}
-            contentContainerStyle={s.idleContent}
-            scrollEnabled={false}
+            contentContainerStyle={[
+              s.idleContent,
+              {
+                paddingTop: insets.top + 116,
+                paddingBottom: Math.max(insets.bottom, 16) + 80,
+              },
+            ]}
             keyboardShouldPersistTaps="handled">
-
-            {/* Main Visual: Pulsing Black Hole Circular Button */}
+            {/* Center OkLab WebGL Orb */}
             <View style={s.centerSection}>
               <View style={s.circleWrapper}>
-                {/* Outer pulsing ring 2 */}
-                <Animated.View
-                  style={[
-                    s.pulseRing,
-                    {
-                      borderColor: themeColors.primary,
-                      backgroundColor: themeColors.glowLight,
-                      transform: [
-                        {
-                          scale: pulseAnim.interpolate({
-                            inputRange: [1, 1.15],
-                            outputRange: [1, 1.45],
-                          }),
-                        },
-                      ],
-                      opacity: pulseAnim.interpolate({
-                        inputRange: [1, 1.15],
-                        outputRange: [0.25, 0],
-                      }),
-                    },
-                  ]}
-                />
-                {/* Outer pulsing ring 1 */}
-                <Animated.View
-                  style={[
-                    s.pulseRing,
-                    {
-                      borderColor: themeColors.primary,
-                      backgroundColor: themeColors.glow,
-                      transform: [
-                        {
-                          scale: pulseAnim.interpolate({
-                            inputRange: [1, 1.15],
-                            outputRange: [1, 1.25],
-                          }),
-                        },
-                      ],
-                      opacity: pulseAnim.interpolate({
-                        inputRange: [1, 1.15],
-                        outputRange: [0.45, 0.05],
-                      }),
-                    },
-                  ]}
-                />
-
-                {/* Main Action Circle */}
-                <Pressable
-                  style={[
-                    s.circleButton,
-                    {
-                      borderColor: themeColors.primary,
-                      shadowColor: themeColors.primary,
-                    },
-                  ]}
+                <Orb
+                  size={168}
+                  preset={orbPreset}
+                  themeAccent={themeColors.primary}
+                  themePalette={appliedTheme?.palette}
+                  isLightBackground={isLightBackground}
                   onPress={handleCirclePress}
-                  android_ripple={{ color: 'rgba(255,255,255,0.1)', borderless: true }}>
-                  {isLoading ? (
-                    <ActivityIndicator size="large" color="#FFFFFF" />
-                  ) : (
-                    <Ionicons
-                      name="cloud-download"
-                      size={48}
-                      color={urlInput.trim().length > 0 ? themeColors.primary : '#FFFFFF'}
-                    />
-                  )}
-                </Pressable>
+                  onLongPress={cycleOrbPreset}
+                  isLoading={isLoading}
+                />
               </View>
 
               <Text style={s.centerHint}>
                 {platform
-                  ? `Tap to fetch ${platform}`
+                  ? `Tap to fetch ${themeColors.label}`
                   : urlInput.trim().length > 0
-                    ? 'Tap to process link'
-                    : 'Copy link & tap circle'}
+                  ? 'Tap to process link'
+                  : 'Copy link & tap orb'}
               </Text>
             </View>
 
-            {/* Input Box Card */}
+            {/* Input Container */}
             <View style={s.inputContainer}>
-              {detectedClipboardUrl && phase === 'idle' && (
-                <Animated.View
-                  style={[
-                    s.clipboardBanner,
-                    {
-                      opacity: clipboardAnim,
-                      transform: [
-                        {
-                          translateY: clipboardAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [-8, 0],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}>
-                  <View style={s.clipboardBannerLeft}>
-                    <Ionicons
-                      name={
-                        detectedPlatform === 'instagram'
-                          ? 'logo-instagram'
-                          : detectedPlatform === 'pinterest'
-                            ? 'logo-pinterest'
-                            : detectedPlatform === 'twitter'
-                              ? 'logo-twitter'
-                              : 'link-outline'
-                      }
-                      size={18}
-                      color={
-                        detectedPlatform === 'instagram'
-                          ? '#E1306C'
-                          : detectedPlatform === 'pinterest'
-                            ? '#E60023'
-                            : detectedPlatform === 'twitter'
-                              ? '#1D9BF0'
-                              : '#FF9F0A'
-                      }
-                    />
-                    <View style={{ marginLeft: 10, flex: 1 }}>
-                      <Text style={s.clipboardBannerTitle}>
-                        {detectedPlatform
-                          ? `${detectedPlatform.charAt(0).toUpperCase() + detectedPlatform.slice(1)} link in clipboard`
-                          : 'Copied link detected'}
-                      </Text>
-                      <Text numberOfLines={1} style={s.clipboardBannerSubtitle}>
-                        {detectedClipboardUrl}
-                      </Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      s.clipboardFetchBtn,
-                      {
-                        backgroundColor:
-                          detectedPlatform === 'instagram'
-                            ? '#E1306C'
-                            : detectedPlatform === 'pinterest'
-                              ? '#E60023'
-                              : detectedPlatform === 'twitter'
-                                ? '#1D9BF0'
-                                : '#FF9F0A',
-                      },
-                    ]}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      const urlToFetch = detectedClipboardUrl;
-                      hideClipboardBanner();
-                      setUrlInput(urlToFetch);
-                      handleExtract(urlToFetch);
-                    }}>
-                    <Ionicons name="flash" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={s.clipboardFetchBtnTxt}>Fetch</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      lastDismissedClipboardRef.current = detectedClipboardUrl;
-                      hideClipboardBanner();
-                    }}
-                    hitSlop={10}
-                    style={{ marginLeft: 8, padding: 4 }}>
-                    <Ionicons name="close" size={18} color="#8E8E93" />
-                  </TouchableOpacity>
-                </Animated.View>
-              )}
+              <ClipboardBanner
+                url={detectedUrl}
+                platform={detectedPlatform}
+                animValue={clipboardAnim}
+                onFetch={url => {
+                  setUrlInput(url);
+                  handleExtract(url);
+                }}
+                onDismiss={hideClipboardBanner}
+              />
 
               <View style={s.inputCard}>
-                <Ionicons
-                  name={
-                    platform === 'instagram'
-                      ? 'logo-instagram'
-                      : platform === 'pinterest'
-                        ? 'logo-pinterest'
-                        : platform === 'twitter'
-                          ? 'logo-twitter'
-                          : 'link-outline'
-                  }
+                <themeColors.Icon
                   size={20}
                   color={themeColors.primary}
                   style={s.inputIcon}
                 />
                 <TextInput
                   style={s.input}
-                  placeholder="Paste Instagram, Pinterest, or Twitter/X link..."
+                  placeholder="Paste Instagram, YouTube, Twitter/X, or Pinterest link..."
                   placeholderTextColor="#5E5E62"
                   value={urlInput}
-                  onChangeText={(val) => {
+                  onChangeText={val => {
                     const clean = extractUrlFromText(val);
                     setUrlInput(clean || val);
-                    if (detectedClipboardUrl) hideClipboardBanner();
+                    if (detectedUrl) hideClipboardBanner();
                   }}
                   editable={!isLoading}
                   autoCapitalize="none"
@@ -1006,89 +576,32 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     onPress={() => {
                       setUrlInput('');
-                      if (detectedClipboardUrl) hideClipboardBanner();
+                      if (detectedUrl) hideClipboardBanner();
                     }}
                     hitSlop={12}>
-                    <Ionicons name="close-circle" size={20} color="#5E5E62" />
+                    <XCircle size={20} color="#5E5E62" />
                   </TouchableOpacity>
                 )}
               </View>
 
-              {phase === 'error' && <Text style={s.errorText} numberOfLines={3}>{errorMsg}</Text>}
+              {phase === 'error' && (
+                <Text style={s.errorText} numberOfLines={3}>
+                  {errorMsg}
+                </Text>
+              )}
             </View>
 
-            {/* Recent History section */}
-            {history.length > 0 && (
-              <View style={s.historySection}>
-                {/* Filter chips */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterChipsRow}>
-                  {(['all','instagram','twitter','pinterest'] as HistoryFilter[]).map(f => {
-                    const labels: Record<HistoryFilter, string> = {
-                      all: 'All', instagram: 'Instagram',
-                      twitter: 'Twitter', pinterest: 'Pinterest'
-                    };
-                    const active = historyFilter === f;
-                    const hasItems = f === 'all' ? history.length > 0 : history.some(h => h.platform === f);
-                    if (!hasItems) return null;
-                    return (
-                      <Pressable
-                        key={f}
-                        style={[s.filterChip, active && { backgroundColor: themeColors.primary, borderColor: themeColors.primary }]}
-                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setHistoryFilter(f); }}>
-                        <Text style={[s.filterChipTxt, active && { color: '#000' }]}>{labels[f]}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Unified history row */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.historyRow}>
-                  {history
-                    .filter(item => historyFilter === 'all' || item.platform === historyFilter)
-                    .map((item, idx) => {
-                      const firstItem = item.singleResult ?? item.carouselItems?.[0];
-                      const thumb = firstItem?.thumbnail ?? firstItem?.url;
-                      const badgeColors: Record<string, string> = {
-                        instagram: '#E1306C', twitter: '#1D9BF0', pinterest: '#E60023'
-                      };
-                      const iconNames: Record<string, any> = {
-                        instagram: 'logo-instagram', twitter: 'logo-twitter', pinterest: 'logo-pinterest'
-                      };
-                      return (
-                        <View key={item.url + idx} style={s.historyCardContainer}>
-                          <Pressable
-                            style={s.historyCard}
-                            onPress={() => {
-                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                              transitionToPhase('result', () => {
-                                setUrlInput(item.url);
-                                setSingleResult(item.singleResult);
-                                setCarouselItems(item.carouselItems);
-                              });
-                            }}>
-                            {thumb ? (
-                              <Image source={{ uri: thumb }} style={s.historyThumb} />
-                            ) : (
-                              <View style={s.historyPlaceholder}>
-                                <Ionicons name={iconNames[item.platform] ?? 'link-outline'} size={20} color="#48484A" />
-                              </View>
-                            )}
-                            <View style={[s.historyPlatformBadge, { backgroundColor: badgeColors[item.platform] ?? '#FF9F0A' }]}>
-                              <Ionicons name={iconNames[item.platform] ?? 'link-outline'} size={10} color="#FFFFFF" />
-                            </View>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setHistory(prev => prev.filter(h => h.url !== item.url)); }}
-                            hitSlop={12}
-                            style={s.historyDeleteBtn}>
-                            <Ionicons name="close" size={12} color="#FFFFFF" />
-                          </Pressable>
-                        </View>
-                      );
-                    })}
-                </ScrollView>
-              </View>
-            )}
+            {/* Download History */}
+            <HistorySection
+              history={history}
+              filter={historyFilter}
+              onSelectFilter={setHistoryFilter}
+              filteredItems={historyFilteredItems}
+              onSelectItem={handleSelectHistoryItem}
+              onDeleteItem={removeHistoryItem}
+              activeColor={themeColors.primary}
+              onViewAll={() => navigateWithCascade('Downloads')}
+            />
           </ScrollView>
         )}
 
@@ -1096,125 +609,110 @@ export default function HomeScreen() {
         {isResult && (
           <ScrollView
             style={s.resultScroll}
-            contentContainerStyle={s.resultContent}
+            contentContainerStyle={[
+              s.resultContent,
+              {
+                paddingTop: insets.top + 88,
+                paddingBottom: Math.max(insets.bottom, 24) + 64,
+              },
+            ]}
             showsVerticalScrollIndicator={false}>
-            {/* Media Preview Container (Single Result or Swiper Carousel) */}
             {singleResult && (
               <View style={s.mediaContainer}>
-                <View style={s.mediaCard}>
-                  {singleResult.type === 'video' ? (
-                    <View style={s.videoWrapper}>
-                      <VideoView
-                        player={videoPlayer}
-                        style={s.mediaPrev}
-                        nativeControls={false}
-                        contentFit="contain"
-                      />
-
-                      {/* Transparent overlay covering the whole video to capture taps on Android */}
-                      <Pressable style={StyleSheet.absoluteFill} onPress={handleVideoPress} />
-
-                      {/* Custom Controls Overlay */}
-                      <Animated.View
-                        style={[s.controlsOverlay, { opacity: controlsOpacity }]}
-                        pointerEvents={controlsActive ? 'box-none' : 'none'}
-                      >
-                        <View style={s.centerControlsRow}>
-                          <TouchableOpacity onPress={skipBackward} style={s.iconButton}>
-                            <Ionicons name="play-back-outline" size={20} color="#FFFFFF" />
-                            <Text style={s.skipText}>5s</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity onPress={togglePlayPause} style={s.glassPlayBtn}>
-                            <Ionicons name={isPlaying ? "pause" : "play"} size={28} color="#FFFFFF" />
-                          </TouchableOpacity>
-
-                          <TouchableOpacity onPress={skipForward} style={s.iconButton}>
-                            <Ionicons name="play-forward-outline" size={20} color="#FFFFFF" />
-                            <Text style={s.skipText}>5s</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        <View style={s.bottomControlsPanel}>
-                          <Pressable
-                            style={s.seekerContainer}
-                            onLayout={(e) => {
-                              seekerWidthRef.current = e.nativeEvent.layout.width;
-                            }}
-                            onPress={handleSeek}
-                          >
-                            <View style={s.seekerBg} pointerEvents="none">
-                              <View style={[s.seekerFill, { width: `${(videoPlayer.duration > 0 ? (currentTime || 0) / videoPlayer.duration : 0) * 100}%` }]} />
-                              <View style={[s.seekerKnob, { left: `${(videoPlayer.duration > 0 ? (currentTime || 0) / videoPlayer.duration : 0) * 100}%` }]} />
-                            </View>
-                          </Pressable>
-
-                          <View style={s.bottomPanelMetaRow}>
-                            <Text style={s.timeText}>
-                              {formatTime(currentTime)} • {formatTime(videoPlayer.duration)}
-                            </Text>
-
-                            <View style={s.rightActionsRow}>
-                              <TouchableOpacity onPress={toggleMute} style={s.glassControlBtn}>
-                                <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={14} color="#FFFFFF" />
-                              </TouchableOpacity>
-
-                              <TouchableOpacity 
-                                onPress={toggleLoop} 
-                                style={[
-                                  s.glassControlBtn, 
-                                  isLooping && { backgroundColor: themeColors.primary, borderColor: themeColors.primary }
-                                ]}
-                              >
-                                <Ionicons name="repeat" size={14} color={isLooping ? "#000000" : "#FFFFFF"} />
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        </View>
-                      </Animated.View>
-                    </View>
-                  ) : singleResult.thumbnail ? (
+                {singleResult.type === 'video' ? (
+                  <CustomVideoPlayer
+                    player={videoPlayer}
+                    height={singleResult.platform === 'youtube' ? undefined : 320}
+                    thumbnailUrl={singleResult.thumbnail}
+                    themeColor={themeColors.primary}
+                  />
+                ) : singleResult.thumbnail ? (
+                  <View style={s.imageCard}>
                     <Image
                       source={{ uri: singleResult.thumbnail }}
-                      style={s.mediaPrev}
+                      style={s.mediaImage}
                       resizeMode="cover"
                     />
-                  ) : null}
-                </View>
-
-
-
-                {/* Title chip for YouTube / generic */}
-                {singleResult.title ? (
-                  <View style={s.titleBox}>
-                    <Ionicons name="musical-notes-outline" size={14} color="#8E8E93" />
-                    <Text style={s.titleTxt} numberOfLines={2}>{singleResult.title}</Text>
                   </View>
                 ) : null}
 
+                {/* Title */}
+                {singleResult.title ? (
+                  <View style={s.titleBox}>
+                    <themeColors.Icon
+                      size={14}
+                      color={themeColors.primary}
+                    />
+                    <Text style={s.titleTxt} numberOfLines={2}>
+                      {singleResult.title}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Quality options (YouTube) */}
+                {singleResult.qualities && singleResult.qualities.length > 0 && (
+                  <QualitySelector
+                    qualities={singleResult.qualities}
+                    selectedId={selectedQuality}
+                    onSelect={setSelectedQuality}
+                    accentColor={themeColors.primary}
+                  />
+                )}
+
+                {/* HLS Notice */}
                 {singleResult.hlsNote ? (
                   <View style={s.hlsBox}>
-                    <Ionicons name="alert-circle-outline" size={18} color="#FF9F0A" />
+                    <AlertCircle size={18} color="#FF9F0A" />
                     <Text style={s.hlsTxt}>{singleResult.hlsNote}</Text>
                   </View>
                 ) : downloading ? (
                   <ProgressBar progress={progress} />
                 ) : (
                   <Pressable
-                    style={{ width: '100%' }}
+                    style={{ width: '100%', marginTop: 8 }}
                     disabled={downloading || downloadSuccess}
                     onPress={() => {
-                      doDownload(singleResult.url, singleResult.type);
+                      if (singleResult.qualities && singleResult.qualities.length > 0) {
+                        const targetQuality =
+                          singleResult.qualities.find(q => q.id === selectedQuality) ||
+                          singleResult.qualities[0];
+                        const dlType = targetQuality.type || singleResult.type;
+                        const dlUrl = targetQuality.url || singleResult.url;
+                        const safeTitle = (singleResult.title || 'media')
+                          .replace(/[^a-zA-Z0-9_-]/g, '_')
+                          .slice(0, 25);
+                        const customName = `anyfetch_${singleResult.platform}_${safeTitle}_${selectedQuality}.${
+                          targetQuality.container || 'mp4'
+                        }`;
+                        doDownload(dlUrl, dlType as any, customName);
+                      } else {
+                        doDownload(singleResult.url, singleResult.type as any);
+                      }
                     }}>
                     <Animated.View style={[s.mainDlBtn, { backgroundColor: btnBgColor }]}>
-                      <Ionicons
-                        name={downloadSuccess ? 'checkmark-circle' : 'download'}
-                        size={18}
-                        color={downloadSuccess ? '#FFFFFF' : '#000000'}
-                        style={s.mainDlBtnIcon}
-                      />
+                      {downloadSuccess ? (
+                        <CheckCircle
+                          size={18}
+                          color="#FFFFFF"
+                          weight="Filled"
+                          style={s.mainDlBtnIcon}
+                        />
+                      ) : (
+                        <Download
+                          size={18}
+                          color="#000000"
+                          style={s.mainDlBtnIcon}
+                        />
+                      )}
                       <Text style={[s.mainDlBtnTxt, downloadSuccess && { color: '#FFFFFF' }]}>
-                        {downloadSuccess ? 'Completed' : 'Download Media'}
+                        {downloadSuccess
+                          ? 'Completed'
+                          : singleResult.qualities
+                          ? `Download ${
+                              singleResult.qualities.find(q => q.id === selectedQuality)?.label ||
+                              'Media'
+                            }`
+                          : 'Download Media'}
                       </Text>
                     </Animated.View>
                   </Pressable>
@@ -1222,1053 +720,216 @@ export default function HomeScreen() {
               </View>
             )}
 
+            {/* Carousel Result */}
             {carouselItems.length > 0 && (
-              <View style={s.carouselSwiperContainer}>
-                <FlatList
-                  data={carouselItems}
-                  horizontal
-                  pagingEnabled={false}
-                  decelerationRate="fast"
-                  snapToInterval={CARD_WIDTH + CARD_GAP}
-                  snapToAlignment="center"
-                  contentContainerStyle={{ paddingHorizontal: CARD_PADDING }}
-                  showsHorizontalScrollIndicator={false}
-                  keyExtractor={item => String(item.index)}
-                  onScroll={Animated.event(
-                    [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-                    { useNativeDriver: false, listener: handleScroll }
-                  )}
-                  scrollEventThrottle={16}
-                  renderItem={({ item }) => (
-                    <View style={s.swiperCard}>
-                      {item.type === 'video' ? (
-                        item.index === activeIndex ? (
-                          <View style={[s.videoWrapper, { height: '100%' }]}>
-                            <Pressable style={{ flex: 1 }} onPress={togglePlayPause}>
-                              <VideoView
-                                player={videoPlayer}
-                                style={[s.mediaPrev, { height: '100%' }]}
-                                nativeControls={false}
-                                contentFit="contain"
-                              />
-                            </Pressable>
-
-                            {/* Center Play Overlay when Paused */}
-                            {!isPlaying && (
-                              <Pressable style={s.swiperPlayOverlay} onPress={togglePlayPause}>
-                                <Ionicons name="play" size={44} color="rgba(255, 255, 255, 0.85)" />
-                              </Pressable>
-                            )}
-
-                            {/* Volume Button Overlay */}
-                            <TouchableOpacity
-                              style={s.swiperVolumeBtn}
-                              onPress={toggleMute}
-                              activeOpacity={0.7}
-                            >
-                              <Ionicons
-                                name={isMuted ? "volume-mute" : "volume-high"}
-                                size={16}
-                                color="#FFFFFF"
-                              />
-                            </TouchableOpacity>
-                          </View>
-                        ) : (
-                          <View style={s.inactiveVideoWrapper}>
-                            <Image
-                              source={{ uri: item.thumbnail || item.url }}
-                              style={[s.mediaPrev, { height: '100%' }]}
-                              resizeMode="cover"
-                            />
-                            <View style={s.inactivePlayOverlay}>
-                              <Ionicons name="play" size={40} color="rgba(255, 255, 255, 0.85)" />
-                            </View>
-                          </View>
-                        )
-                      ) : (
-                        <Image
-                          source={{ uri: item.url }}
-                          style={[s.mediaPrev, { height: '100%' }]}
-                          resizeMode="contain"
-                        />
-                      )}
-
-                      {/* Slide Counter Overlay */}
-                      <View style={s.slideCounter}>
-                        <Text style={s.slideCounterText}>{item.index + 1} / {carouselItems.length}</Text>
-                      </View>
-
-                      {/* Selection Check Circle Overlay */}
-                      <Pressable
-                        style={s.slideSelectBadge}
-                        onPress={() => {
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          setCarouselItems(prev =>
-                            prev.map(i => (i.index === item.index ? { ...i, selected: !i.selected } : i))
-                          );
-                        }}
-                      >
-                        <Ionicons
-                          name={item.selected ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={24}
-                          color={item.selected ? themeColors.primary : '#FFFFFF'}
-                        />
-                      </Pressable>
-                    </View>
-                  )}
-                />
-
-                {/* Standard Pagination Dots */}
-                <View style={s.dotsContainer}>
-                  {carouselItems.map((_, idx) => {
-                    const dotWidth = scrollX.interpolate({
-                      inputRange: [
-                        (idx - 1) * (CARD_WIDTH + CARD_GAP),
-                        idx * (CARD_WIDTH + CARD_GAP),
-                        (idx + 1) * (CARD_WIDTH + CARD_GAP),
-                      ],
-                      outputRange: [6, 14, 6],
-                      extrapolate: 'clamp',
-                    });
-
-                    const dotOpacity = scrollX.interpolate({
-                      inputRange: [
-                        (idx - 1) * (CARD_WIDTH + CARD_GAP),
-                        idx * (CARD_WIDTH + CARD_GAP),
-                        (idx + 1) * (CARD_WIDTH + CARD_GAP),
-                      ],
-                      outputRange: [0.35, 1, 0.35],
-                      extrapolate: 'clamp',
-                    });
-
-                    return (
-                      <Animated.View
-                        key={idx}
-                        style={[
-                          s.dot,
-                          {
-                            width: dotWidth,
-                            opacity: dotOpacity,
-                            backgroundColor: themeColors.primary,
-                          }
-                        ]}
-                      />
-                    );
-                  })}
-                </View>
-              </View>
-            )}
-
-            {/* Carousel Section Actions */}
-            {carouselItems.length > 0 && (
-              <View style={s.carouselSection}>
-                {downloading ? (
-                  <ProgressBar progress={progress} />
-                ) : (
-                  <View style={s.carouselActions}>
-                    <Pressable
-                      style={[s.actionBtn, s.actionBtnOutline]}
-                      onPress={toggleSelectAll}>
-                      <Ionicons 
-                        name={allSelected ? "close-circle-outline" : "checkmark-done"} 
-                        size={16} 
-                        color="#FFFFFF" 
-                        style={s.actionBtnIcon} 
-                      />
-                      <Text style={s.actionBtnOutlineTxt}>
-                        {allSelected ? "Deselect All" : "Select All"}
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={{ flex: 1 }}
-                      disabled={downloading || downloadSuccess || selectedCount === 0}
-                      onPress={() => {
-                        if (selectedCount === 0) {
-                          Alert.alert('Select items first');
-                          return;
-                        }
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        downloadCarouselSelected();
-                      }}>
-                      <Animated.View
-                        style={[
-                          s.actionBtn,
-                          selectedCount === 0 && { backgroundColor: '#3A3A3C', shadowColor: 'transparent' },
-                          selectedCount > 0 && { backgroundColor: btnBgColor }
-                        ]}
-                      >
-                        <Ionicons
-                          name={downloadSuccess ? "checkmark-circle" : "download"}
-                          size={16}
-                          color={selectedCount === 0 ? "#8E8E93" : (downloadSuccess ? "#FFFFFF" : "#000000")}
-                          style={s.actionBtnIcon}
-                        />
-                        <Text
-                          style={[
-                            s.actionBtnTxt,
-                            selectedCount === 0 && { color: '#8E8E93' },
-                            downloadSuccess && { color: '#FFFFFF' }
-                          ]}
-                        >
-                          {downloadSuccess 
-                            ? "Completed" 
-                            : (selectedCount > 0 ? `Download (${selectedCount})` : "Download")}
-                        </Text>
-                      </Animated.View>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
+              <CarouselSwiper
+                items={carouselItems}
+                videoPlayer={videoPlayer}
+                themeColor={themeColors.primary}
+                downloading={downloading}
+                downloadSuccess={downloadSuccess}
+                progress={progress}
+                onToggleSelect={index => {
+                  setCarouselItems(prev =>
+                    prev.map(i => (i.index === index ? { ...i, selected: !i.selected } : i))
+                  );
+                }}
+                onToggleSelectAll={() => {
+                  const allSelected = carouselItems.every(i => i.selected);
+                  setCarouselItems(prev => prev.map(i => ({ ...i, selected: !allSelected })));
+                }}
+                onDownloadSelected={downloadCarouselSelected}
+              />
             )}
           </ScrollView>
         )}
       </Animated.View>
 
-      {/* ═══ INFORMATION MODAL ═══ */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={infoVisible}
-        onRequestClose={() => setInfoVisible(false)}>
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>ANYFETCH</Text>
-            <Text style={s.modalSub}>Universal Media Downloader</Text>
-            <View style={s.modalDivider} />
-            <Text style={s.modalDesc}>
-              Download videos & images from Instagram, Pinterest, and Twitter/X.
-            </Text>
-            <Text style={s.modalInstructions}>
-              1. Copy any supported link.{"\n"}
-              2. Open Anyfetch — clipboard is auto-read.{"\n"}
-              3. Tap the glowing circle to preview.{"\n"}
-              4. Tap Download to save locally.
-            </Text>
-            <Pressable style={s.modalCloseBtn} onPress={() => setInfoVisible(false)}>
-              <Text style={s.modalCloseTxt}>Dismiss</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-
-      {/* GitHub Releases In-App APK Updater Modal */}
+      {/* In-App APK Updater Modal */}
       <UpdateModal
         visible={updateModalVisible}
         releaseInfo={githubRelease}
         onDismiss={() => setUpdateModalVisible(false)}
       />
-    </View>
-  );
-}
 
-function ProgressBar({ progress }: { progress: DownloadProgress | null }) {
-  const pct = Math.round((progress?.fraction ?? 0) * 100);
-  const animWidth = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(animWidth, {
-      toValue: progress?.fraction ?? 0,
-      duration: 350,
-      useNativeDriver: false,
-    }).start();
-  }, [progress?.fraction]);
-
-  const widthStyle = animWidth.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'],
-  });
-
-  return (
-    <View style={s.progWrap}>
-      <View style={s.progInfoRow}>
-        <Text style={s.progTxt}>Downloading...</Text>
-        <Text style={s.progTxt}>{pct}%</Text>
-      </View>
-      <View style={s.progBg}>
-        <Animated.View style={[s.progFill, { width: widthStyle }]} />
-      </View>
+      {/* Floating Bottom Navigation */}
+      <BottomTabBar
+        activeTab="Home"
+        onSelectTab={(tab) => {
+          if (tab === 'Home') {
+            if (isResult) reset();
+            return;
+          }
+          navigateWithCascade(tab);
+        }}
+        downloadsCount={history.length}
+      />
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000000' },
-  mainWrapper: { flex: 1 },
-
-  // Header styling
-  header: {
-    height: 56,
+  root: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  brandBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    marginTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 12,
+    gap: 7,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minWidth: 64,
+  brandDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 99,
+    overflow: 'hidden',
+    backgroundColor: '#FF9F0A',
   },
-  headerBackText: {
-    color: '#FF9F0A',
-    fontSize: 15,
-    marginLeft: 4,
-  },
-  headerTitle: {
+  floatingMenuTitle: {
+    fontFamily: FONTS.display,
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 4,
-    textAlign: 'center',
+    fontSize: 13,
+    letterSpacing: 1.5,
   },
-  headerRight: {
-    minWidth: 64,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
+  mainWrapper: {
+    flex: 1,
   },
-  headerRightDummy: {
-    width: 64,
+  idleContainer: {
+    flex: 1,
   },
-
-  // Idle state layout
-  idleContainer: { flex: 1 },
   idleContent: {
-    paddingHorizontal: 24,
-    paddingTop: H * 0.06,
-    paddingBottom: 48,
-    alignItems: 'center' as const,
-    gap: 28,
-  },
-  scrollContainer: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: H * 0.06,
-    paddingBottom: 48,
-    alignItems: 'center' as const,
-    gap: 36,
-  },
-
-  // History filter chips
-  filterChipsRow: {
-    flexDirection: 'row' as const,
-    gap: 8,
+    alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 12,
+    paddingTop: 40,
+    paddingBottom: 40,
   },
-  filterChip: {
-    borderWidth: 1,
-    borderColor: '#3A3A3C',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    backgroundColor: '#1C1C1E',
+  centerSection: {
+    alignItems: 'center',
+    marginBottom: 36,
   },
-  filterChipTxt: {
-    color: '#AEAEB2',
-    fontSize: 12,
-    fontWeight: '600' as const,
-    letterSpacing: 0.3,
+  circleWrapper: {
+    width: 170,
+    height: 170,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
   },
-
-  // YouTube quality chips
-  ytControlsBox: {
+  centerHint: {
+    fontFamily: FONTS.sans,
+    color: '#8E8E93',
+    fontSize: 13,
+    marginTop: 18,
+    letterSpacing: 0.2,
+  },
+  inputContainer: {
     width: '100%',
-    marginTop: 4,
-    marginBottom: 2,
-    paddingHorizontal: 4,
-  },
-  ytControlsLabel: {
-    color: '#636366',
-    fontSize: 10,
-    fontWeight: '700' as const,
-    letterSpacing: 1.2,
-    marginBottom: 8,
-    marginLeft: 2,
-  },
-  ytChipRow: {
-    flexDirection: 'row' as const,
     gap: 8,
-    flexWrap: 'wrap' as const,
   },
-  ytChip: {
+  inputCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(24, 24, 26, 0.78)',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#3A3A3C',
-    borderRadius: 20,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
     paddingHorizontal: 14,
-    paddingVertical: 7,
-    backgroundColor: '#1C1C1E',
+    height: 52,
   },
-  ytChipTxt: {
-    color: '#AEAEB2',
-    fontSize: 13,
-    fontWeight: '600' as const,
+  inputIcon: {
+    marginRight: 10,
   },
-
-  // YouTube thumbnail preview badge
-  ytThumbBadge: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center' as const,
-    justifyContent: 'flex-end' as const,
-    paddingBottom: 16,
-  },
-  ytPlayBadge: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 8,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  ytPlayBadgeTxt: {
+  input: {
+    fontFamily: FONTS.sans,
+    flex: 1,
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600' as const,
+    fontSize: 13.5,
   },
-
-  // Title display (YouTube / generic)
+  errorText: {
+    fontFamily: FONTS.sans,
+    color: '#FF453A',
+    fontSize: 12,
+    paddingHorizontal: 6,
+    marginTop: 2,
+  },
+  resultScroll: {
+    flex: 1,
+  },
+  resultContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 40,
+    alignItems: 'center',
+  },
+  mediaContainer: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 12,
+  },
+  imageCard: {
+    width: '100%',
+    height: 360,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+  },
+  mediaImage: {
+    width: '100%',
+    height: '100%',
+  },
   titleBox: {
-    flexDirection: 'row' as const,
-    alignItems: 'flex-start' as const,
-    gap: 6,
-    backgroundColor: '#1C1C1E',
-    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#18181A',
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginTop: 4,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
     width: '100%',
   },
   titleTxt: {
-    color: '#AEAEB2',
-    fontSize: 13,
-    flex: 1,
-    lineHeight: 18,
-  },
-
-  // Central Section
-  centerSection: {
-    alignItems: 'center',
-    marginVertical: 12,
-  },
-  circleWrapper: {
-    width: 220,
-    height: 220,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pulseRing: {
-    position: 'absolute',
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    borderWidth: 1.5,
-  },
-  circleButton: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: '#0A0A0A',
-    borderWidth: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerHint: {
-    color: '#8E8E93',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    marginTop: 24,
-  },
-
-  // Input Box Card
-  inputContainer: {
-    width: '100%',
-    gap: 12,
-  },
-  clipboardBanner: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(28, 28, 30, 0.95)',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#3A3A3C',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  clipboardBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  clipboardBannerTitle: {
+    fontFamily: FONTS.display,
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  clipboardBannerSubtitle: {
-    color: '#8E8E93',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  clipboardFetchBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginLeft: 8,
-  },
-  clipboardFetchBtnTxt: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  inputCard: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1C1C1E',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    height: 56,
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  inputIcon: {
-    marginRight: 12,
-  },
-  input: {
+    fontSize: 13.5,
     flex: 1,
-    color: '#FFFFFF',
-    fontSize: 15,
-  },
-  pasteBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2C2C2E',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    gap: 4,
-  },
-  pasteBadgeTxt: {
-    color: '#8E8E93',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  errorText: {
-    color: '#FF453A',
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 18,
-    paddingHorizontal: 16,
-  },
-
-  // Recent History section
-  historySection: {
-    width: '100%',
-    marginTop: 12,
-  },
-  historyLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#48484A',
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  historyRow: {
-    gap: 12,
-    paddingRight: 16,
-  },
-  historyCardContainer: {
-    position: 'relative',
-    paddingTop: 6,
-    paddingRight: 6,
-    marginRight: 8,
-  },
-  historyCard: {
-    width: 68,
-    height: 68,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  historyThumb: {
-    width: '100%',
-    height: '100%',
-  },
-  historyPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  historyPlatformBadge: {
-    position: 'absolute',
-    bottom: 4,
-    left: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 6,
-    padding: 3,
-  },
-  historyDeleteBtn: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: '#2C2C2E',
-    borderRadius: 11,
-    width: 22,
-    height: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#000000',
-    zIndex: 10,
-    elevation: 3,
-  },
-
-  // ── Result State ──────────────────────────────────────────────────────────
-  resultScroll: { flex: 1 },
-  resultContent: {
-    paddingHorizontal: 0,
-    paddingTop: 16,
-    paddingBottom: 48,
-    gap: 24,
-  },
-  mediaContainer: {
-    alignItems: 'center',
-    width: '100%',
-    paddingHorizontal: 20,
-    gap: 20,
-  },
-  mediaCard: {
-    width: '100%',
-    borderRadius: 20,
-    overflow: 'hidden',
-    backgroundColor: '#0F0F10',
-    borderWidth: 1,
-    borderColor: '#1C1C1E',
-    alignItems: 'center',
-  },
-  mediaPrev: {
-    width: '100%',
-    height: W * 1.15,
-    backgroundColor: '#000000',
+    letterSpacing: -0.1,
   },
   hlsBox: {
-    backgroundColor: '#1C1C1E',
-    borderRadius: 12,
-    padding: 14,
-    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    backgroundColor: 'rgba(255, 159, 10, 0.1)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 159, 10, 0.3)',
+    width: '100%',
   },
   hlsTxt: {
-    color: '#8E8E93',
-    fontSize: 13,
+    fontFamily: FONTS.sans,
+    color: '#FF9F0A',
+    fontSize: 12,
     flex: 1,
-    lineHeight: 18,
+    lineHeight: 16,
   },
   mainDlBtn: {
-    backgroundColor: '#FF9F0A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
     borderRadius: 14,
-    height: 56,
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 4,
-    shadowColor: '#FF9F0A',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  mainDlBtnIcon: { marginRight: 8 },
-  mainDlBtnTxt: { color: '#000000', fontWeight: '800', fontSize: 16 },
-
-  // Carousel sections
-  carouselSection: {
-    gap: 14,
-    marginTop: 8,
-    paddingHorizontal: 20,
-  },
-  carouselHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  carouselLabel: {
-    color: '#8E8E93',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  carouselList: {
-    paddingRight: 16,
-  },
-  carouselCell: {
-    width: 120,
-    height: 160,
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginRight: 12,
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  carouselImg: {
-    width: '100%',
-    height: '100%',
-  },
-  carouselCellOverlay: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 12,
-    padding: 2,
-  },
-  carouselNum: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  carouselActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 4,
-  },
-  actionBtn: {
-    flex: 1,
-    height: 48,
-    backgroundColor: '#FF9F0A',
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionBtnIcon: { marginRight: 6 },
-  actionBtnTxt: { color: '#000000', fontWeight: '700', fontSize: 14 },
-  actionBtnOutline: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  actionBtnOutlineTxt: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
-
-  // Download Progress Bar
-  progWrap: { width: '100%', gap: 8 },
-  progInfoRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  progTxt: { color: '#8E8E93', fontSize: 12, fontWeight: '500' },
-  progBg: { width: '100%', height: 4, backgroundColor: '#1C1C1E', borderRadius: 2, overflow: 'hidden' },
-  progFill: { height: '100%', backgroundColor: '#FF9F0A', borderRadius: 2 },
-
-  // Modal Info Overlay
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 4,
-    marginBottom: 6,
-  },
-  modalSub: {
-    fontSize: 12,
-    color: '#FF9F0A',
-    fontWeight: '600',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  modalDivider: {
-    width: 40,
-    height: 2,
-    backgroundColor: '#2C2C2E',
-    marginVertical: 18,
-  },
-  modalDesc: {
-    color: '#E5E5EA',
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  modalInstructions: {
-    color: '#8E8E93',
-    fontSize: 13,
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  modalCloseBtn: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    height: 46,
-    width: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCloseTxt: {
-    color: '#000000',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-
-  // Custom Video Player Controls Styles
-  videoWrapper: {
-    position: 'relative',
-    width: '100%',
-    borderRadius: 20,
-    overflow: 'hidden',
-    backgroundColor: '#000000',
-    borderWidth: 1,
-    borderColor: '#1C1C1E',
-  },
-  videoPressable: {
-    width: '100%',
-  },
-  controlsOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'space-between',
-    padding: 16,
-  },
-  centerControlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 28,
-    flex: 1,
-  },
-  iconButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-  },
-  skipText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '800',
-    marginTop: -1,
-  },
-  glassPlayBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-  },
-  bottomControlsPanel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 15, 15, 0.82)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 12,
-  },
-  timeText: {
-    color: '#E5E5EA',
-    fontSize: 11,
-    fontWeight: '700',
-    minWidth: 78,
-  },
-  seekerContainer: {
-    flex: 1,
-    height: 24,
-    justifyContent: 'center',
-  },
-  seekerBg: {
-    height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    borderRadius: 2,
-    position: 'relative',
-    width: '100%',
-  },
-  seekerFill: {
-    height: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 2,
-  },
-  seekerKnob: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FFFFFF',
-    position: 'absolute',
-    top: -3,
-    marginLeft: -5,
-  },
-  rightActionsRow: {
-    flexDirection: 'row',
     gap: 8,
   },
-  glassControlBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  mainDlBtnIcon: {
+    marginRight: 2,
   },
-  swiperWrapper: {
-    width: '100%',
-    height: W * 1.15,
-  },
-  slideCounter: {
-    position: 'absolute',
-    bottom: 14,
-    left: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  slideCounterText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  slideSelectBadge: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    borderRadius: 18,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
-  },
-  bottomPanelMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-  },
-  carouselSwiperContainer: {
-    width: W,
-    marginVertical: 10,
-    alignItems: 'center',
-  },
-  swiperCard: {
-    width: CARD_WIDTH,
-    height: CARD_WIDTH * 1.25,
-    marginRight: CARD_GAP,
-    borderRadius: 24,
-    overflow: 'hidden',
-    backgroundColor: '#0F0F10',
-    borderWidth: 1,
-    borderColor: '#1C1C1E',
-    position: 'relative',
-  },
-  inactiveVideoWrapper: {
-    position: 'relative',
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#000000',
-  },
-  inactivePlayOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-  },
-  dotsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: 20,
-    marginTop: 18,
-    marginBottom: 6,
-    gap: 6,
-  },
-  dot: {
-    height: 6,
-    borderRadius: 3,
-  },
-  swiperVolumeBtn: {
-    position: 'absolute',
-    bottom: 14,
-    right: 14,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  swiperPlayOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+  mainDlBtnTxt: {
+    fontFamily: FONTS.sans,
+    color: '#000000',
+    fontSize: 14,
+    letterSpacing: 0.2,
   },
 });
