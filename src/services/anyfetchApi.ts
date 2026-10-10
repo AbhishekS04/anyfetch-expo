@@ -18,7 +18,7 @@ import { SupportedPlatform } from '../theme/platformColors';
 const SETTINGS_FILE = (documentDirectory ?? '') + 'settings.json';
 
 // Default endpoint (can be configured in Settings)
-export const DEFAULT_API_URL = ''; // User or deployment can set default or use custom in Settings
+export const DEFAULT_API_URL = 'https://anyfetch-api.getvoroa.com';
 
 export interface ApiHealthStatus {
   ok: boolean;
@@ -37,7 +37,7 @@ export async function getAnyFetchApiUrl(): Promise<string> {
     if (fileInfo.exists) {
       const content = await readAsStringAsync(SETTINGS_FILE);
       const settings = JSON.parse(content);
-      if (typeof settings.anyfetchApiUrl === 'string') {
+      if (typeof settings.anyfetchApiUrl === 'string' && settings.anyfetchApiUrl.trim()) {
         return settings.anyfetchApiUrl.trim();
       }
     }
@@ -176,14 +176,22 @@ export async function fetchFromAnyFetchApi(
     throw new Error(data.error || 'Failed to extract media');
   }
 
+  const forceHttps = (urlStr?: string): string => {
+    if (!urlStr) return '';
+    if (urlStr.startsWith('http://anyfetch-api.getvoroa.com')) {
+      return urlStr.replace(/^http:\/\//i, 'https://');
+    }
+    return urlStr;
+  };
+
   // Map to ExtractedResult
   let carouselItems: ExtractedMediaItem[] | undefined;
   if (Array.isArray(data.carouselItems) && data.carouselItems.length > 0) {
     carouselItems = data.carouselItems.map((item: any, idx: number) => ({
       index: idx,
       type: item.type === 'video' ? 'video' : 'image',
-      url: item.url,
-      thumbnail: item.thumbnail || item.url,
+      url: forceHttps(item.url),
+      thumbnail: forceHttps(item.thumbnail || item.url),
       selected: true,
     }));
   }
@@ -194,7 +202,7 @@ export async function fetchFromAnyFetchApi(
       id: q.id,
       label: q.label,
       type: q.type,
-      url: q.url,
+      url: forceHttps(q.url),
       container: q.container || (q.type === 'audio' ? 'mp3' : 'mp4'),
       bitrate: q.bitrate,
     }));
@@ -203,8 +211,8 @@ export async function fetchFromAnyFetchApi(
   return {
     platform: (data.platform || 'youtube') as SupportedPlatform,
     type: data.type || (carouselItems ? 'carousel' : 'video'),
-    url: data.url || (carouselItems?.[0]?.url ?? ''),
-    thumbnail: data.thumbnail,
+    url: forceHttps(data.url) || (carouselItems?.[0]?.url ?? ''),
+    thumbnail: forceHttps(data.thumbnail),
     title: data.title,
     author: data.author,
     duration: data.duration,

@@ -17,6 +17,7 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const EXTERNAL_URL = process.env.EXTERNAL_URL || '';
 
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 
@@ -84,9 +85,13 @@ app.post('/api/resolve', async (req: Request, res: Response) => {
     return;
   }
 
-  // Derive hostUrl for streaming endpoints
-  const hostUrl =
-    EXTERNAL_URL || `${req.protocol}://${req.get('host') || `localhost:${PORT}`}`;
+  // Derive hostUrl for streaming endpoints (always force HTTPS in cloud/production)
+  let hostUrl = EXTERNAL_URL?.replace(/\/+$/, '');
+  if (!hostUrl) {
+    const host = req.get('x-forwarded-host') || req.get('host') || `localhost:${PORT}`;
+    const proto = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+    hostUrl = `${proto}://${host}`;
+  }
 
   try {
     let result: ExtractedMediaResponse;
