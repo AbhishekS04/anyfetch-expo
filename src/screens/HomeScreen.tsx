@@ -36,6 +36,7 @@ import * as Haptics from 'expo-haptics';
 
 import { checkForGitHubUpdate, GitHubReleaseInfo } from '../services/githubUpdate';
 import { detectPlatform, downloadMedia, DownloadProgress, extractUrlFromText } from '../utils/download';
+import { formatTime } from '../utils/time';
 import { extractMedia, ExtractedMediaItem, ExtractedResult } from '../extractors';
 import { getPlatformTheme } from '../theme/platformColors';
 import { useClipboardDetection } from '../hooks/useClipboardDetection';
@@ -173,9 +174,9 @@ export default function HomeScreen() {
     p.timeUpdateEventInterval = 0.25;
   });
 
-  // Keep video source synced with media result
+  // Keep video source synced with media result (exclude YouTube to prevent streaming)
   useEffect(() => {
-    if (singleResult?.type === 'video' && singleResult.url) {
+    if (singleResult?.type === 'video' && singleResult.url && singleResult.platform !== 'youtube') {
       if (typeof (videoPlayer as any).replaceAsync === 'function') {
         (videoPlayer as any).replaceAsync(singleResult.url).catch(() => {});
       } else {
@@ -558,7 +559,7 @@ export default function HomeScreen() {
                 />
                 <TextInput
                   style={s.input}
-                  placeholder="Paste Instagram, YouTube, Twitter/X, or Pinterest link..."
+                  placeholder="Paste YouTube, Instagram, TikTok, Pinterest, X link..."
                   placeholderTextColor="#5E5E62"
                   value={urlInput}
                   onChangeText={val => {
@@ -619,10 +620,42 @@ export default function HomeScreen() {
             showsVerticalScrollIndicator={false}>
             {singleResult && (
               <View style={s.mediaContainer}>
-                {singleResult.type === 'video' ? (
+                {singleResult.platform === 'youtube' ? (
+                  <View style={s.ytThumbnailCard}>
+                    {singleResult.thumbnail ? (
+                      <Image
+                        source={{ uri: singleResult.thumbnail }}
+                        style={s.ytThumbnailImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={s.ytThumbnailFallback}>
+                        <themeColors.Icon size={40} color={themeColors.primary} />
+                      </View>
+                    )}
+
+                    {/* Subtle Overlay Vignette */}
+                    <View style={s.ytThumbnailVignette} />
+
+                    {/* Top Platform Badge */}
+                    <View style={s.ytPlatformBadge}>
+                      <View style={s.ytBadgeDot} />
+                      <Text style={s.ytPlatformBadgeText}>YouTube</Text>
+                    </View>
+
+                    {/* Bottom-Right Duration Badge if available */}
+                    {typeof singleResult.duration === 'number' && singleResult.duration > 0 ? (
+                      <View style={s.ytDurationBadge}>
+                        <Text style={s.ytDurationText}>
+                          {formatTime(singleResult.duration)}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : singleResult.type === 'video' ? (
                   <CustomVideoPlayer
                     player={videoPlayer}
-                    height={singleResult.platform === 'youtube' ? undefined : 320}
+                    height={320}
                     thumbnailUrl={singleResult.thumbnail}
                     themeColor={themeColors.primary}
                   />
@@ -877,6 +910,76 @@ const s = StyleSheet.create({
   mediaImage: {
     width: '100%',
     height: '100%',
+  },
+  ytThumbnailCard: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#0E0E10',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    position: 'relative',
+    justifyContent: 'space-between',
+  },
+  ytThumbnailImage: {
+    ...StyleSheet.absoluteFill,
+    width: '100%',
+    height: '100%',
+  },
+  ytThumbnailFallback: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#121216',
+  },
+  ytThumbnailVignette: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.16)',
+  },
+  ytPlatformBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    margin: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(10, 10, 12, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+  },
+  ytBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#FF0000',
+  },
+  ytPlatformBadgeText: {
+    fontFamily: FONTS.sans,
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  ytDurationBadge: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
+  },
+  ytDurationText: {
+    fontFamily: FONTS.sans,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
   titleBox: {
     flexDirection: 'row',

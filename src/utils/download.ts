@@ -24,6 +24,7 @@ import {
   deleteAsync,
   downloadAsync,
   getInfoAsync,
+  createDownloadResumable,
 } from 'expo-file-system/legacy';
 import { EncodingType } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -53,7 +54,7 @@ export async function requestMediaPermission(): Promise<boolean> {
   return true; // sharing/SAF flow — no media library permission needed
 }
 
-/** One download attempt; returns size in bytes (0 = failed / empty) */
+/** One download attempt with background execution and streaming progress */
 async function attemptDownload(
   url: string,
   localUri: string,
@@ -63,47 +64,89 @@ async function attemptDownload(
   // Clean up stale file if present
   await deleteAsync(localUri, { idempotent: true }).catch(() => {});
 
-  const result = await downloadAsync(url, localUri, { headers });
-  if (!result?.uri) return { uri: localUri, size: 0, status: 0 };
+  // createDownloadResumable uses Android DownloadManager — survives app backgrounding
+  const downloadResumable = createDownloadResumable(
+    url,
+    localUri,
+    { headers },
+    progress => {
+      if (onProgress && progress.totalBytesExpectedToWrite > 0) {
+        const fraction = Math.min(
+          1,
+          Math.max(0, progress.totalBytesWritten / progress.totalBytesExpectedToWrite)
+        );
+        onProgress({
+          received: progress.totalBytesWritten,
+          total: progress.totalBytesExpectedToWrite,
+          fraction,
+        });
+      } else if (onProgress && progress.totalBytesWritten > 0) {
+        // Mux stream — total size unknown until complete (chunked transfer)
+        onProgress({
+          received: progress.totalBytesWritten,
+          total: 0, // 0 means indeterminate
+          fraction: -1, // signal indeterminate to UI
+        });
+      }
+    }
+  );
 
-  if (onProgress) {
-   onProgress({ received: 1, total: 1, fraction: 1 });
+  try {
+    const result = await downloadResumable.downloadAsync();
+    if (!result?.uri) return { uri: localUri, size: 0, status: 0 };
+    if (onProgress) onProgress({ received: 1, total: 1, fraction: 1 });
+    const info = await getInfoAsync(result.uri);
+    const size = info.exists && 'size' in info ? (info.size ?? 0) : 0;
+    return { uri: result.uri, size, status: result.status ?? 200 };
+  } catch {
+    // Fallback to basic downloadAsync
+    try {
+      const result = await downloadAsync(url, localUri, { headers });
+      if (!result?.uri) return { uri: localUri, size: 0, status: 0 };
+      if (onProgress) onProgress({ received: 1, total: 1, fraction: 1 });
+      const info = await getInfoAsync(result.uri);
+      const size = info.exists && 'size' in info ? (info.size ?? 0) : 0;
+      return { uri: result.uri, size, status: result.status ?? 200 };
+    } catch {
+      return { uri: localUri, size: 0, status: 0 };
+    }
   }
-
-  const info = await getInfoAsync(result.uri);
-  const size = info.exists && 'size' in info ? (info.size ?? 0) : 0;
-  return { uri: result.uri, size, status: result.status ?? 0 };
 }
 
 function buildHeaders(url: string, variant: 'bare' | 'browser' | 'android'): Record<string, string> {
   let referer = '';
+  let isYouTube = false;
   try {
-   const host = new URL(url).hostname.toLowerCase();
-   if (host.includes('twimg.com') || host.includes('twitter.com') || host.includes('x.com')) {
-     referer = 'https://x.com/';
-   } else if (host.includes('instagram.com') || host.includes('cdninstagram.com')) {
-     referer = 'https://www.instagram.com/';
-   } else if (host.includes('pinimg.com') || host.includes('pinterest.com')) {
-     referer = 'https://www.pinterest.com/';
-   }
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes('twimg.com') || host.includes('twitter.com') || host.includes('x.com')) {
+      referer = 'https://x.com/';
+    } else if (host.includes('instagram.com') || host.includes('cdninstagram.com')) {
+      referer = 'https://www.instagram.com/';
+    } else if (host.includes('pinimg.com') || host.includes('pinterest.com')) {
+      referer = 'https://www.pinterest.com/';
+    } else if (host.includes('googlevideo.com') || host.includes('youtube.com') || host.includes('ytimg.com')) {
+      isYouTube = true;
+    }
   } catch {
-   // Ignore malformed URLs; we fall back to a header-less request.
+    // Ignore malformed URLs; we fall back to a header-less request.
   }
 
   if (variant === 'bare') return {};
 
   const base: Record<string, string> = {
-   Accept: '*/*',
-   'Accept-Language': 'en-US,en;q=0.9',
-   'User-Agent':
-     variant === 'android'
-       ? 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36'
-       : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    Accept: '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'User-Agent':
+      isYouTube
+        ? 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip'
+        : variant === 'android'
+        ? 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36'
+        : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
   };
 
-  if (referer) {
-   base.Referer = referer;
-   base.Origin = new URL(referer).origin;
+  if (referer && !isYouTube) {
+    base.Referer = referer;
+    base.Origin = new URL(referer).origin;
   }
 
   return base;
@@ -129,18 +172,56 @@ export async function downloadMedia(
 
     const localUri = cacheRoot + filename;
 
-    const attempts = [buildHeaders(cdnUrl, 'bare'), buildHeaders(cdnUrl, 'browser'), buildHeaders(cdnUrl, 'android')];
+    // Detect if this is our own mux server endpoint — use bare headers
+    const isMuxUrl = cdnUrl.includes('/api/stream');
+    const isYtUrl = cdnUrl.includes('googlevideo.com') || cdnUrl.includes('youtube.com');
+
     let downloadedUri = localUri;
     let size = 0;
     let lastStatus = 0;
 
-    for (const headers of attempts) {
-      const result = await attemptDownload(cdnUrl, localUri, headers, onProgress);
+    // Fast cache check: if identical file is already downloaded with a valid size (>100KB), reuse it
+    const existingInfo = await getInfoAsync(localUri).catch(() => null);
+    if (existingInfo?.exists && 'size' in existingInfo && (existingInfo.size ?? 0) > 100000) {
+      downloadedUri = localUri;
+      size = existingInfo.size ?? 0;
+      if (onProgress) onProgress({ received: 1, total: 1, fraction: 1 });
+    } else if (isMuxUrl) {
+      // First attempt: cloud multiplexer
+      const result = await attemptDownload(cdnUrl, localUri, {}, onProgress);
       downloadedUri = result.uri;
       size = result.size;
       lastStatus = result.status;
-      if (size > 0 && (lastStatus === 0 || lastStatus < 400)) {
-        break;
+
+      // Seamless fallback: if cloud multiplexer returned 0 bytes or failed,
+      // extract the direct video/audio stream URL and download directly on-device
+      if (size === 0) {
+        try {
+          const parsed = new URL(cdnUrl);
+          const directStreamUrl = parsed.searchParams.get('video') || parsed.searchParams.get('audio');
+          if (directStreamUrl) {
+            const ytHeaders = buildHeaders(directStreamUrl, 'android');
+            const fallbackResult = await attemptDownload(directStreamUrl, localUri, ytHeaders, onProgress);
+            downloadedUri = fallbackResult.uri;
+            size = fallbackResult.size;
+            lastStatus = fallbackResult.status;
+          }
+        } catch {}
+      }
+    } else {
+      const attempts = isYtUrl
+        ? [buildHeaders(cdnUrl, 'android'), buildHeaders(cdnUrl, 'bare')]
+        : [
+            buildHeaders(cdnUrl, 'bare'),
+            buildHeaders(cdnUrl, 'browser'),
+            buildHeaders(cdnUrl, 'android'),
+          ];
+      for (const headers of attempts) {
+        const result = await attemptDownload(cdnUrl, localUri, headers, onProgress);
+        downloadedUri = result.uri;
+        size = result.size;
+        lastStatus = result.status;
+        if (size > 0 && (lastStatus === 0 || lastStatus < 400)) break;
       }
     }
 

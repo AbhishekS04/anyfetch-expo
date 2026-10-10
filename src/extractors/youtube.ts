@@ -11,6 +11,7 @@
  */
 
 import { extractUrlFromText } from '../utils/download';
+import { getAnyFetchApiUrl, isAnyFetchApiEnabled } from '../services/anyfetchApi';
 
 export interface YtQualityOption {
   id: string; // '1080p' | '720p' | '480p' | '360p' | 'audio'
@@ -100,104 +101,253 @@ async function fetchOEmbedInfo(videoId: string): Promise<{ title: string; author
   return null;
 }
 
-/**
- * Fetch direct streams from YouTube Innertube ANDROID_VR client
- */
-async function fetchInnertubeStreams(videoId: string): Promise<{
-  title?: string;
-  author?: string;
-  duration?: number;
-  qualities: YtQualityOption[];
-} | null> {
+// Module-level visitorData cache for Android VR player
+let cachedVisitorData: string | undefined;
+let visitorDataExpiresAt = 0;
+
+async function getVisitorData(): Promise<string | undefined> {
+  if (cachedVisitorData && Date.now() < visitorDataExpiresAt) {
+    return cachedVisitorData;
+  }
   try {
-    const res = await fetch('https://www.youtube.com/youtubei/v1/player', {
+    const visRes = await fetch('https://www.youtube.com/youtubei/v1/visitor_id', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Android; Mobile)',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         context: {
           client: {
             clientName: 'ANDROID_VR',
-            clientVersion: '1.61.48',
+            clientVersion: '1.65.10',
             deviceMake: 'Oculus',
             deviceModel: 'Quest 3',
+            androidSdkVersion: 32,
+            osName: 'Android',
+            osVersion: '12L',
             hl: 'en',
             gl: 'US',
           },
         },
-        videoId,
       }),
     });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.playabilityStatus?.status !== 'OK') return null;
-
-    const details = data?.videoDetails;
-    const streamingData = data?.streamingData;
-    if (!streamingData) return null;
-
-    const qualities: YtQualityOption[] = [];
-
-    // Progressive streams (Combined Video + Audio, e.g. 360p itag 18, 720p itag 22)
-    if (Array.isArray(streamingData.formats)) {
-      for (const fmt of streamingData.formats) {
-        if (fmt.url) {
-          const resLabel =
-            fmt.qualityLabel || (fmt.itag === 18 ? '360p' : fmt.itag === 22 ? '720p' : 'SD');
-          qualities.push({
-            id: resLabel.toLowerCase().replace(/[^0-9a-z]/g, ''),
-            label: `${resLabel} MP4`,
-            resolution: resLabel,
-            type: 'video',
-            url: fmt.url,
-            container: 'mp4',
-          });
-        }
+    if (visRes.ok) {
+      const visJson: any = await visRes.json();
+      const v = visJson?.responseContext?.visitorData;
+      if (v) {
+        cachedVisitorData = v;
+        visitorDataExpiresAt = Date.now() + 60 * 60 * 1000;
+        return v;
       }
     }
+  } catch {}
+  return cachedVisitorData;
+}
 
-    // Adaptive streams (1080p, 720p, audio only itag 140)
-    if (Array.isArray(streamingData.adaptiveFormats)) {
-      for (const fmt of streamingData.adaptiveFormats) {
-        if (fmt.url) {
-          if (fmt.mimeType?.includes('audio') && fmt.itag === 140) {
+/**
+ * Fetch direct streams from YouTube Innertube
+ */
+async function fetchInnertubeStreams(
+  videoId: string,
+  apiUrl?: string | null
+): Promise<{
+  title?: string;
+  author?: string;
+  duration?: number;
+  thumbnail?: string;
+  qualities: YtQualityOption[];
+} | null> {
+  const visitorData = await getVisitorData();
+
+  const innertubeClients = [
+    {
+      name: 'ANDROID',
+      headers: {
+        'User-Agent': 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
+        'X-YouTube-Client-Name': '3',
+        'X-YouTube-Client-Version': '21.26.364',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID',
+          clientVersion: '21.26.364',
+          androidSdkVersion: 30,
+          osName: 'Android',
+          osVersion: '11',
+          hl: 'en',
+          gl: 'US',
+          ...(visitorData ? { visitorData } : {}),
+        },
+      },
+    },
+    {
+      name: 'ANDROID_VR',
+      headers: {
+        'User-Agent':
+          'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        'X-YouTube-Client-Name': '28',
+        'X-YouTube-Client-Version': '1.65.10',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID_VR',
+          clientVersion: '1.65.10',
+          deviceMake: 'Oculus',
+          deviceModel: 'Quest 3',
+          androidSdkVersion: 32,
+          osName: 'Android',
+          osVersion: '12L',
+          hl: 'en',
+          gl: 'US',
+          ...(visitorData ? { visitorData } : {}),
+        },
+      },
+    },
+    {
+      name: 'IOS',
+      headers: {
+        'User-Agent': 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+        'X-YouTube-Client-Name': '5',
+        'X-YouTube-Client-Version': '21.26.4',
+      },
+      context: {
+        client: {
+          clientName: 'IOS',
+          clientVersion: '21.26.4',
+          deviceMake: 'Apple',
+          deviceModel: 'iPhone16,2',
+          osName: 'iPhone',
+          osVersion: '18.3.2.22D82',
+          hl: 'en',
+          gl: 'US',
+        },
+      },
+    },
+  ];
+
+  for (const clientConfig of innertubeClients) {
+    try {
+      const res = await fetch('https://www.youtube.com/youtubei/v1/player', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...clientConfig.headers,
+        },
+        body: JSON.stringify({
+          context: clientConfig.context,
+          videoId,
+        }),
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data?.playabilityStatus?.status !== 'OK') continue;
+
+      const streamingData = data?.streamingData;
+      if (!streamingData) continue;
+
+      const hasDirectStreams = Boolean(
+        (Array.isArray(streamingData.formats) &&
+          streamingData.formats.some((f: any) => f.url)) ||
+          (Array.isArray(streamingData.adaptiveFormats) &&
+            streamingData.adaptiveFormats.some((f: any) => f.url))
+      );
+      if (!hasDirectStreams) continue;
+
+      const details = data?.videoDetails;
+      const qualities: YtQualityOption[] = [];
+
+      // Progressive streams (Combined Video + Audio, e.g. 360p itag 18, 720p itag 22)
+      if (Array.isArray(streamingData.formats)) {
+        for (const fmt of streamingData.formats) {
+          if (fmt.url) {
+            const resLabel =
+              fmt.qualityLabel || (fmt.itag === 18 ? '360p' : fmt.itag === 22 ? '720p' : 'SD');
             qualities.push({
-              id: 'audio',
-              label: 'Audio (M4A / MP3)',
-              type: 'audio',
+              id: resLabel.toLowerCase().replace(/[^0-9a-z]/g, ''),
+              label: `${resLabel} MP4 (Direct)`,
+              resolution: resLabel,
+              type: 'video',
               url: fmt.url,
-              container: 'mp3',
-              bitrate: '128 kbps',
+              container: 'mp4',
             });
-          } else if (fmt.mimeType?.includes('video/mp4') && fmt.qualityLabel) {
+          }
+        }
+      }
+
+      // Best Audio stream (itag 140 m4a AAC preferred)
+      let bestAudioUrl: string | null = null;
+      if (Array.isArray(streamingData.adaptiveFormats)) {
+        const audioFormats = streamingData.adaptiveFormats.filter(
+          (f: any) => f.mimeType?.includes('audio') && f.url
+        );
+        const m4aAudio = audioFormats.find((f: any) => f.itag === 140);
+        bestAudioUrl = m4aAudio?.url || audioFormats[0]?.url || null;
+      }
+
+      const safeTitle = encodeURIComponent(
+        (details?.title || 'youtube_video').replace(/[^a-zA-Z0-9_\-\s]/g, '').trim() || 'youtube_video'
+      );
+
+      // If Cloud API is reachable and audio exists, construct muxed HD options (1080p, 720p, etc.)
+      // CRITICAL: NEVER output un-muxed adaptive video streams as download options because they have NO AUDIO!
+      if (apiUrl && bestAudioUrl && Array.isArray(streamingData.adaptiveFormats)) {
+        for (const fmt of streamingData.adaptiveFormats) {
+          if (fmt.url && fmt.mimeType?.includes('video/mp4') && fmt.qualityLabel) {
             const cleanId = fmt.qualityLabel.toLowerCase().replace(/[^0-9a-z]/g, '');
             if (!qualities.some(q => q.id === cleanId)) {
               qualities.push({
                 id: cleanId,
-                label: `${fmt.qualityLabel} HD`,
+                label: `${fmt.qualityLabel} HD (Cloud Mux)`,
                 resolution: fmt.qualityLabel,
                 type: 'video',
-                url: fmt.url,
+                url: `${apiUrl}/api/stream?video=${encodeURIComponent(fmt.url)}&audio=${encodeURIComponent(bestAudioUrl)}&title=${safeTitle}_${cleanId}.mp4`,
                 container: 'mp4',
               });
             }
           }
         }
       }
-    }
 
-    return {
-      title: details?.title,
-      author: details?.author,
-      duration: details?.lengthSeconds ? parseInt(details.lengthSeconds, 10) : undefined,
-      qualities,
-    };
-  } catch {
-    return null;
+      // Audio download options
+      if (bestAudioUrl) {
+        if (apiUrl) {
+          qualities.push({
+            id: 'audio',
+            label: 'Audio (MP3 320k)',
+            type: 'audio',
+            url: `${apiUrl}/api/stream?audio=${encodeURIComponent(bestAudioUrl)}&format=mp3&title=${safeTitle}.mp3`,
+            container: 'mp3',
+            bitrate: '320 kbps',
+          });
+        }
+        qualities.push({
+          id: 'm4a',
+          label: 'Audio (M4A AAC - Direct)',
+          type: 'audio',
+          url: bestAudioUrl,
+          container: 'm4a',
+          bitrate: '128 kbps',
+        });
+      }
+
+      if (qualities.length > 0) {
+        let bestThumb: string | undefined;
+        if (Array.isArray(details?.thumbnail?.thumbnails) && details.thumbnail.thumbnails.length > 0) {
+          bestThumb = details.thumbnail.thumbnails[details.thumbnail.thumbnails.length - 1]?.url;
+        }
+        return {
+          title: details?.title,
+          author: details?.author,
+          duration: details?.lengthSeconds ? parseInt(details.lengthSeconds, 10) : undefined,
+          thumbnail: bestThumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          qualities,
+        };
+      }
+    } catch {
+      // try next client
+    }
   }
+
+  return null;
 }
 
 /**
@@ -214,14 +364,24 @@ export async function extractYouTube(rawInput: string): Promise<YtExtractResult>
   let discoveredStreams: YtQualityOption[] = [];
 
   // 2. High-resolution thumbnail
-  const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  let thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
   // 3. Primary Engine: Direct YouTube Innertube resolution
-  const innertubeResult = await fetchInnertubeStreams(videoId);
+  let apiUrl: string | null = null;
+  try {
+    const enabled = await isAnyFetchApiEnabled();
+    if (enabled) {
+      apiUrl = await getAnyFetchApiUrl();
+      if (apiUrl) apiUrl = apiUrl.replace(/\/+$/, '');
+    }
+  } catch {}
+
+  const innertubeResult = await fetchInnertubeStreams(videoId, apiUrl);
   if (innertubeResult && innertubeResult.qualities.length > 0) {
     if (innertubeResult.title) title = innertubeResult.title;
     if (innertubeResult.author) author = innertubeResult.author;
     if (innertubeResult.duration) duration = innertubeResult.duration;
+    if (innertubeResult.thumbnail) thumbnail = innertubeResult.thumbnail;
     discoveredStreams = innertubeResult.qualities;
   }
 
@@ -288,20 +448,26 @@ export async function extractYouTube(rawInput: string): Promise<YtExtractResult>
     );
   }
 
-  // Sort qualities: 1080p -> 720p -> 480p -> 360p -> audio
+  // Sort qualities: 1080p -> 720p -> 480p -> 360p -> 240p -> 144p -> audio -> m4a
   const order: Record<string, number> = {
     '1080p': 1,
     '720p': 2,
     '480p': 3,
     '360p': 4,
-    'audio': 5,
+    '240p': 5,
+    '144p': 6,
+    'audio': 7,
+    'm4a': 8,
   };
   discoveredStreams.sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
 
-  // Default playable URL for VideoView preview
+  // Default playable URL for VideoView preview:
+  // Starts playing INSTANTLY in lightweight progressive quality (360p) with audio built-in.
   const videoStream =
-    discoveredStreams.find(q => q.id === '720p') ||
-    discoveredStreams.find(q => q.id === '360p') ||
+    discoveredStreams.find(q => q.id === '360p' && q.type === 'video' && !q.url.includes('/api/stream')) ||
+    discoveredStreams.find(q => q.id === '360p' && q.type === 'video') ||
+    discoveredStreams.find(q => q.id === '480p' && q.type === 'video') ||
+    discoveredStreams.find(q => q.id === '720p' && q.type === 'video') ||
     discoveredStreams.find(q => q.type === 'video') ||
     discoveredStreams[0];
 

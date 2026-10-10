@@ -77,7 +77,7 @@ export async function isAnyFetchApiEnabled(): Promise<boolean> {
       }
     }
   } catch {}
-  return true;
+  return false;
 }
 
 /**
@@ -166,14 +166,20 @@ export async function fetchFromAnyFetchApi(
   });
   clearTimeout(timeoutId);
 
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({}));
-    throw new Error(errorBody.error || `Server returned error ${res.status}`);
+  const rawText = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(
+      res.ok
+        ? 'Cloud engine returned non-JSON response'
+        : `Cloud engine error ${res.status}`
+    );
   }
 
-  const data: any = await res.json();
-  if (!data.success) {
-    throw new Error(data.error || 'Failed to extract media');
+  if (!res.ok || !data.success) {
+    throw new Error(data?.error || `Server returned error ${res.status}`);
   }
 
   const forceHttps = (urlStr?: string): string => {

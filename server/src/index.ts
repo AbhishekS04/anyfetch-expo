@@ -131,13 +131,20 @@ app.post('/api/resolve', async (req: Request, res: Response) => {
  * Streaming on-the-fly Muxer Endpoint
  * GET /api/stream?video=...&audio=...&format=mp4&title=...
  */
-app.get('/api/stream', (req: Request, res: Response) => {
+app.get('/api/stream', async (req: Request, res: Response) => {
   const videoUrl = req.query.video as string | undefined;
   const audioUrl = req.query.audio as string | undefined;
   const format = (req.query.format as 'mp4' | 'mp3') || 'mp4';
   const filename = (req.query.title as string) || 'anyfetch_download.mp4';
 
-  streamMux(req, res, { videoUrl, audioUrl, format, filename });
+  try {
+    await streamMux(req, res, { videoUrl, audioUrl, format, filename });
+  } catch (err: any) {
+    console.error('[Stream Error]', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Stream multiplexing failed' });
+    }
+  }
 });
 
 app.listen(PORT, '0.0.0.0', () => {

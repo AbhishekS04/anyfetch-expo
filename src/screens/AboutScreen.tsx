@@ -135,7 +135,7 @@ export default function AboutScreen() {
         contentContainerStyle={[
           s.scrollContent,
           {
-            paddingBottom: Math.max(insets.bottom + 110, 120),
+            paddingBottom: Math.max(insets.bottom + 130, 140),
           },
         ]}
         showsVerticalScrollIndicator={false}
@@ -308,7 +308,7 @@ export default function AboutScreen() {
           <View style={s.cardDivider} />
           <SpecRow label="Version" value={`v${APP_VERSION}`} />
           <View style={s.cardDivider} />
-          <SpecRow label="Runtime" value="Expo SDK 52 • React Native 0.76" />
+          <SpecRow label="Runtime" value="Expo SDK 57 • React Native 0.86" />
           <View style={s.cardDivider} />
           <SpecRow label="Graphics Engine" value="React Native Skia (GPU Shaders)" />
           <View style={s.cardDivider} />
@@ -636,19 +636,24 @@ const s = StyleSheet.create({
   specRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3,
+    alignItems: 'flex-start',
+    paddingVertical: 6,
+    gap: 14,
   },
   specLabel: {
     fontFamily: FONTS.sans,
     fontSize: 13,
     color: '#8E8E93',
+    flexShrink: 0,
+    maxWidth: '44%',
   },
   specValue: {
     fontFamily: FONTS.sans,
     fontSize: 13,
     fontWeight: '500',
     color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'right',
   },
   linksCard: {
     backgroundColor: '#0E0E11',

@@ -77,6 +77,7 @@ import {
   setAnyFetchApiEnabled,
   pingAnyFetchApi,
   ApiHealthStatus,
+  DEFAULT_API_URL,
 } from '../services/anyfetchApi';
 import UpdateModal from '../components/UpdateModal';
 import {
@@ -129,9 +130,7 @@ export default function SettingsScreen() {
 
   // Cloud API Engine state
   const [enableCloudEngine, setEnableCloudEngine] = useState(true);
-  const [cloudApiUrl, setCloudApiUrl] = useState('');
-  const [cloudApiInput, setCloudApiInput] = useState('');
-  const [isEditingCloudApi, setIsEditingCloudApi] = useState(false);
+  const [cloudApiUrl, setCloudApiUrl] = useState(DEFAULT_API_URL);
   const [cloudApiHealth, setCloudApiHealth] = useState<ApiHealthStatus | null>(null);
   const [isTestingCloudApi, setIsTestingCloudApi] = useState(false);
 
@@ -205,13 +204,11 @@ export default function SettingsScreen() {
           if (typeof settings.enableCloudApi === 'boolean') {
             setEnableCloudEngine(settings.enableCloudApi);
           }
-          if (typeof settings.anyfetchApiUrl === 'string') {
-            setCloudApiUrl(settings.anyfetchApiUrl);
-            setCloudApiInput(settings.anyfetchApiUrl);
-            if (settings.anyfetchApiUrl) {
-              pingAnyFetchApi(settings.anyfetchApiUrl).then(setCloudApiHealth);
-            }
-          }
+          const targetUrl = typeof settings.anyfetchApiUrl === 'string' && settings.anyfetchApiUrl.trim()
+            ? settings.anyfetchApiUrl.trim()
+            : DEFAULT_API_URL;
+          setCloudApiUrl(targetUrl);
+          pingAnyFetchApi(targetUrl).then(setCloudApiHealth);
         }
         setActiveRepo(repoToInit);
         setRepoInput(`https://github.com/${repoToInit}`);
@@ -250,45 +247,17 @@ export default function SettingsScreen() {
     await setAnyFetchApiEnabled(val);
   };
 
-  const handleTestCloudApi = async (urlToTest?: string) => {
-    const target = urlToTest || cloudApiInput || cloudApiUrl;
-    if (!target) {
-      Alert.alert('No Endpoint', 'Enter or paste your AnyFetch API URL (e.g. https://your-service.getvoroa.com) first.');
-      return;
-    }
+  const handleRefreshCloudHealth = async () => {
+    if (isTestingCloudApi) return;
     setIsTestingCloudApi(true);
-    Haptics.selectionAsync().catch(() => {});
-    const health = await pingAnyFetchApi(target);
-    setCloudApiHealth(health);
-    setIsTestingCloudApi(false);
-    if (health.ok) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-    }
-  };
-
-  const handleSaveCloudApi = async () => {
-    Haptics.selectionAsync().catch(() => {});
-    const clean = cloudApiInput.trim().replace(/\/+$/, '');
-    setCloudApiUrl(clean);
-    setIsEditingCloudApi(false);
-    await saveAnyFetchApiUrl(clean);
-    if (clean) {
-      handleTestCloudApi(clean);
-    }
-  };
-
-  const handlePasteCloudApi = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     try {
-      const text = await Clipboard.getStringAsync();
-      if (text) {
-        setCloudApiInput(text.trim());
-      } else {
-        Alert.alert('Clipboard Empty', 'No URL found in clipboard.');
-      }
+      const health = await pingAnyFetchApi(cloudApiUrl || DEFAULT_API_URL);
+      setCloudApiHealth(health);
     } catch {
-      Alert.alert('Clipboard Error', 'Could not read clipboard.');
+      setCloudApiHealth({ ok: false, error: 'Offline' });
+    } finally {
+      setIsTestingCloudApi(false);
     }
   };
 
@@ -398,7 +367,7 @@ export default function SettingsScreen() {
         contentContainerStyle={[
           s.content,
           {
-            paddingBottom: Math.max(insets.bottom + 105, 120),
+            paddingBottom: Math.max(insets.bottom + 130, 140),
           },
         ]}
         showsVerticalScrollIndicator={false}
@@ -568,114 +537,34 @@ export default function SettingsScreen() {
               />
             </View>
 
-            {/* Cloud Endpoint Configuration Drawer */}
+            {/* Cloud Acceleration Status Row (API URL hidden, clean green dot indicator) */}
             <TouchableOpacity
               activeOpacity={0.7}
               style={[s.subRowBtn, { marginTop: 8 }]}
-              onPress={() => {
-                Haptics.selectionAsync().catch(() => {});
-                setIsEditingCloudApi(!isEditingCloudApi);
-              }}
+              onPress={handleRefreshCloudHealth}
             >
               <View style={s.subRowLeft}>
                 <View style={[s.iconBox, { width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
                   <Link size={14} color="#10B981" />
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={s.subRowLabel}>Service Endpoint</Text>
-                  <Text style={s.rowSub}>Hosted on Voroa, Render, or Docker</Text>
+                  <Text style={s.subRowLabel}>Acceleration Node</Text>
+                  <Text style={s.rowSub}>High-speed media processing cluster</Text>
                 </View>
               </View>
-              <View style={s.subRowRight}>
-                {cloudApiHealth?.ok ? (
-                  <View style={[s.statusBadge, s.statusBadgeSuccess]}>
-                    <View style={[s.statusDot, s.statusDotSuccess]} />
-                    <Text style={s.statusBadgeText}>{cloudApiHealth.latencyMs}ms</Text>
+              <View style={s.statusDotWrap}>
+                {isTestingCloudApi ? (
+                  <ActivityIndicator size="small" color="#10B981" style={{ transform: [{ scale: 0.7 }] }} />
+                ) : enableCloudEngine && (cloudApiHealth ? cloudApiHealth.ok : true) ? (
+                  <View style={s.greenDotContainer}>
+                    <View style={s.greenDotGlow} />
+                    <View style={s.greenDot} />
                   </View>
-                ) : cloudApiUrl ? (
-                  <View style={[s.statusBadge, s.statusBadgeNeutral]}>
-                    <Text style={s.statusBadgeText}>Unverified</Text>
-                  </View>
-                ) : null}
-                {isEditingCloudApi ? (
-                  <ChevronUp size={14} color="#71717A" />
                 ) : (
-                  <ChevronDown size={14} color="#71717A" />
+                  <View style={s.grayDot} />
                 )}
               </View>
             </TouchableOpacity>
-
-            {isEditingCloudApi && (
-              <View style={s.repoDrawer}>
-                <Text style={s.repoDrawerHint}>
-                  Enter the base URL of your deployed AnyFetch API (e.g. from Voroa or Render):
-                </Text>
-                <View style={s.inputWrap}>
-                  <Link size={15} color="#71717A" style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={s.repoInput}
-                    value={cloudApiInput}
-                    onChangeText={setCloudApiInput}
-                    placeholder="https://your-api.getvoroa.com"
-                    placeholderTextColor="#52525B"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    returnKeyType="done"
-                    onSubmitEditing={handleSaveCloudApi}
-                  />
-                </View>
-                <View style={s.drawerActions}>
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    style={s.drawerBtnSecondary}
-                    onPress={handlePasteCloudApi}
-                  >
-                    <ClipboardIcon size={13} color="#E4E4E7" />
-                    <Text style={s.drawerBtnText}>Paste</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    style={s.drawerBtnSecondary}
-                    onPress={() => handleTestCloudApi()}
-                    disabled={isTestingCloudApi}
-                  >
-                    {isTestingCloudApi ? (
-                      <ActivityIndicator size="small" color="#A1A1AA" style={{ transform: [{ scale: 0.7 }] }} />
-                    ) : (
-                      <>
-                        <Refresh size={13} color="#A1A1AA" />
-                        <Text style={[s.drawerBtnText, { color: '#A1A1AA' }]}>Test</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                  <View style={{ flex: 1 }} />
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    style={[s.drawerBtnPrimary, { backgroundColor: '#10B981' }]}
-                    onPress={handleSaveCloudApi}
-                  >
-                    <Text style={[s.drawerBtnPrimaryText, { color: '#000' }]}>Save</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {cloudApiHealth && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        fontFamily: FONTS.sans,
-                        color: cloudApiHealth.ok ? '#34C759' : '#EF4444',
-                      }}
-                    >
-                      {cloudApiHealth.ok
-                        ? `✓ Server online (${cloudApiHealth.latencyMs}ms latency, uptime: ${cloudApiHealth.uptimeSeconds}s)`
-                        : `✗ ${cloudApiHealth.error || 'Connection failed'}`}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
           </View>
         </View>
 
@@ -1489,7 +1378,39 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flex: 1,
+  },
+  statusDotWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
     flexShrink: 0,
+  },
+  greenDotContainer: {
+    width: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  greenDotGlow: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(16, 185, 129, 0.28)',
+  },
+  greenDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  grayDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#52525B',
   },
   subRowLabel: {
     fontFamily: FONTS.sans,

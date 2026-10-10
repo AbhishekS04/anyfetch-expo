@@ -70,7 +70,7 @@ const DIALER_ITEM_GAP = 10;
 const DIALER_SNAP_INTERVAL = DIALER_ITEM_WIDTH + DIALER_ITEM_GAP;
 const DIALER_PADDING_HORIZONTAL = Math.round((SCREEN_WIDTH - DIALER_ITEM_WIDTH) / 2);
 
-export type PlatformCategory = 'youtube' | 'instagram' | 'facebook' | 'twitter';
+export type PlatformCategory = 'youtube' | 'instagram' | 'facebook' | 'twitter' | 'pinterest' | 'tiktok';
 
 export interface CategoryMediaItem {
   id: string;
@@ -232,6 +232,74 @@ const DEFAULT_CATEGORY_DATA: Record<PlatformCategory, CategoryMediaItem[]> = {
       platform: 'twitter',
     },
   ],
+  pinterest: [
+    {
+      id: 'pin-1',
+      title: 'Minimalist Japandi Loft Interior',
+      date: '16 May, 2025',
+      src: photo('1618221195710-dd6b41faaea6'),
+      duration: 'Photo',
+      platform: 'pinterest',
+    },
+    {
+      id: 'pin-2',
+      title: 'Editorial Typography Moodboard',
+      date: '13 May, 2025',
+      src: photo('1507238691740-187a5b1d37b8'),
+      duration: 'Photo',
+      platform: 'pinterest',
+    },
+    {
+      id: 'pin-3',
+      title: 'Scandinavian Ceramic Architecture',
+      date: '08 May, 2025',
+      src: photo('1513694203232-719a280e022f'),
+      duration: 'Photo',
+      platform: 'pinterest',
+    },
+    {
+      id: 'pin-4',
+      title: 'Monochrome Film Aesthetic 35mm',
+      date: '02 May, 2025',
+      src: photo('1516035069371-29a1b244cc32'),
+      duration: 'Photo',
+      platform: 'pinterest',
+    },
+  ],
+  tiktok: [
+    {
+      id: 'tt-1',
+      title: 'Cinematic Tokyo Street Food 4K',
+      date: '16 May, 2025',
+      src: photo('1555396273-367ea4eb4db5'),
+      duration: '0:32',
+      platform: 'tiktok',
+    },
+    {
+      id: 'tt-2',
+      title: 'Hyperlapse Drone Night Flight',
+      date: '12 May, 2025',
+      src: photo('1519501025264-65ba15a82390'),
+      duration: '0:18',
+      platform: 'tiktok',
+    },
+    {
+      id: 'tt-3',
+      title: 'Cyberpunk Neon Alley Transitions',
+      date: '07 May, 2025',
+      src: photo('1508739773434-c26b3d09e071'),
+      duration: '0:45',
+      platform: 'tiktok',
+    },
+    {
+      id: 'tt-4',
+      title: 'Acoustic Lo-Fi Beats Production',
+      date: '01 May, 2025',
+      src: photo('1511379938547-c1f69419868d'),
+      duration: '0:58',
+      platform: 'tiktok',
+    },
+  ],
 };
 
 export default function DownloadsScreen() {
@@ -275,15 +343,13 @@ export default function DownloadsScreen() {
     if (p === 'twitter' || url.includes('twitter.com') || url.includes('x.com') || url.includes('t.co')) {
       return 'twitter';
     }
-    if (
-      p === 'facebook' ||
-      p === 'pinterest' ||
-      url.includes('facebook.com') ||
-      url.includes('fb.watch') ||
-      url.includes('fb.com') ||
-      url.includes('pinterest.com') ||
-      url.includes('pin.it')
-    ) {
+    if (p === 'pinterest' || url.includes('pinterest.com') || url.includes('pin.it')) {
+      return 'pinterest';
+    }
+    if (p === 'tiktok' || url.includes('tiktok.com')) {
+      return 'tiktok';
+    }
+    if (p === 'facebook' || url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.com')) {
       return 'facebook';
     }
     return 'youtube';
@@ -296,6 +362,8 @@ export default function DownloadsScreen() {
       instagram: 0,
       facebook: 0,
       twitter: 0,
+      pinterest: 0,
+      tiktok: 0,
     };
     history.forEach((item) => {
       const cat = resolveCategory(item);
@@ -311,6 +379,8 @@ export default function DownloadsScreen() {
       instagram: [],
       facebook: [],
       twitter: [],
+      pinterest: [],
+      tiktok: [],
     };
 
     history.forEach((item, idx) => {
@@ -469,15 +539,17 @@ export default function DownloadsScreen() {
 
   return (
     <View style={s.root}>
-      {/* ═══ 1. MAIN DOWNLOADS SCREEN: 2x2 PLATFORM CARDS ═══ */}
-      <View
-        style={[
+      {/* ═══ 1. MAIN DOWNLOADS SCREEN: 2x3 PLATFORM CARDS ═══ */}
+      <ScrollView
+        style={s.mainScrollView}
+        contentContainerStyle={[
           s.mainContainer,
           {
             paddingTop: Math.max(insets.top, 16) + 10,
             paddingBottom: Math.max(insets.bottom + 90, 110),
           },
         ]}
+        showsVerticalScrollIndicator={false}
       >
         {/* Minimal Centered Header Pill */}
         <View style={s.headerPillWrap}>
@@ -487,11 +559,11 @@ export default function DownloadsScreen() {
           </View>
         </View>
 
-        {/* 2x2 Squircle Cards Grid (YouTube, Instagram, Facebook, Twitter / X) */}
+        {/* 2x3 Squircle Cards Grid (YouTube, Instagram, Twitter/X, Facebook, Pinterest, TikTok) */}
         <View style={s.gridContainer}>
           {/* ── CARD 1: YOUTUBE ── */}
           <TouchableOpacity
-            activeOpacity={0.82}
+            activeOpacity={0.78}
             style={[s.cardBase, s.ytCard]}
             onPress={() => openCategoryViewer('youtube')}
           >
@@ -516,7 +588,7 @@ export default function DownloadsScreen() {
 
           {/* ── CARD 2: INSTAGRAM ── */}
           <TouchableOpacity
-            activeOpacity={0.82}
+            activeOpacity={0.78}
             style={[s.cardBase, s.instaCard]}
             onPress={() => openCategoryViewer('instagram')}
           >
@@ -539,9 +611,34 @@ export default function DownloadsScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* ── CARD 3: FACEBOOK ── */}
+          {/* ── CARD 3: TWITTER / X ── */}
           <TouchableOpacity
-            activeOpacity={0.82}
+            activeOpacity={0.78}
+            style={[s.cardBase, s.twitterCard]}
+            onPress={() => openCategoryViewer('twitter')}
+          >
+            <View style={s.cardHeader}>
+              <Text style={s.platformTitle}>Twitter / X</Text>
+              <View style={[s.badgePill, s.twitterBadge]}>
+                <Text style={s.badgePillText}>
+                  {realCounts.twitter} Saved
+                </Text>
+              </View>
+            </View>
+
+            <View style={s.graphicBox}>
+              <TwitterCardIcon />
+            </View>
+
+            <View style={s.cardFooter}>
+              <Text style={s.platformSub}>Clips & Media</Text>
+              <Text style={[s.cardChevron, { color: '#1D9BF0' }]}>›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* ── CARD 4: FACEBOOK ── */}
+          <TouchableOpacity
+            activeOpacity={0.78}
             style={[s.cardBase, s.fbCard]}
             onPress={() => openCategoryViewer('facebook')}
           >
@@ -564,32 +661,57 @@ export default function DownloadsScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* ── CARD 4: TWITTER / X ── */}
+          {/* ── CARD 5: PINTEREST ── */}
           <TouchableOpacity
-            activeOpacity={0.82}
-            style={[s.cardBase, s.twitterCard]}
-            onPress={() => openCategoryViewer('twitter')}
+            activeOpacity={0.78}
+            style={[s.cardBase, s.pinCard]}
+            onPress={() => openCategoryViewer('pinterest')}
           >
             <View style={s.cardHeader}>
-              <Text style={s.platformTitle}>Twitter / X</Text>
-              <View style={[s.badgePill, s.twitterBadge]}>
+              <Text style={s.platformTitle}>Pinterest</Text>
+              <View style={[s.badgePill, s.pinBadge]}>
                 <Text style={s.badgePillText}>
-                  {realCounts.twitter} Saved
+                  {realCounts.pinterest} Saved
                 </Text>
               </View>
             </View>
 
             <View style={s.graphicBox}>
-              <TwitterCardIcon />
+              <PinterestCardIcon />
             </View>
 
             <View style={s.cardFooter}>
-              <Text style={s.platformSub}>Clips & Media</Text>
-              <Text style={[s.cardChevron, { color: '#1D9BF0' }]}>›</Text>
+              <Text style={s.platformSub}>Pins & Media</Text>
+              <Text style={[s.cardChevron, { color: '#E60023' }]}>›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* ── CARD 6: TIKTOK ── */}
+          <TouchableOpacity
+            activeOpacity={0.78}
+            style={[s.cardBase, s.ttCard]}
+            onPress={() => openCategoryViewer('tiktok')}
+          >
+            <View style={s.cardHeader}>
+              <Text style={s.platformTitle}>TikTok</Text>
+              <View style={[s.badgePill, s.ttBadge]}>
+                <Text style={s.badgePillText}>
+                  {realCounts.tiktok} Saved
+                </Text>
+              </View>
+            </View>
+
+            <View style={s.graphicBox}>
+              <TikTokCardIcon />
+            </View>
+
+            <View style={s.cardFooter}>
+              <Text style={s.platformSub}>Clips & Trends</Text>
+              <Text style={[s.cardChevron, { color: '#00F2FE' }]}>›</Text>
             </View>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
 
       {/* ═══ 2. CATEGORY VIEWER FULLSCREEN OVERLAY (Reference Image 2) ═══ */}
       {selectedCategory && (
@@ -910,6 +1032,70 @@ function TwitterCardIcon() {
   );
 }
 
+/**
+ * Pinterest Card Icon:
+ * Signature crimson circle with iconic bold white 'P' monogram
+ */
+function PinterestCardIcon() {
+  return (
+    <View style={widgetStyles.iconCenterWrap}>
+      <Svg width={64} height={64} viewBox="0 0 64 64">
+        <Defs>
+          <LinearGradient id="pinGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <Stop offset="0%" stopColor="#E60023" stopOpacity="1" />
+            <Stop offset="100%" stopColor="#A80018" stopOpacity="1" />
+          </LinearGradient>
+        </Defs>
+        <Circle cx={32} cy={32} r={30} fill="url(#pinGrad)" />
+        <Path
+          d="M 32,12 C 21,12 16,19.8 16,26.5 C 16,30.5 17.5,34.2 20.8,35.5 C 21.3,35.7 21.7,35.5 21.9,34.8 C 22.1,34.1 22.5,32.3 22.7,31.4 C 22.8,30.8 22.7,30.5 22.3,30 C 21.2,28.7 20.5,26.8 20.5,24.5 C 20.5,18 25.3,14 31.4,14 C 36.6,14 40.5,17.4 40.5,22.8 C 40.5,28.6 37.1,33.5 32.5,33.5 C 29.8,33.5 27.8,31.3 28.5,28.5 C 29.3,25.2 30.8,21.6 30.8,19.2 C 30.8,17.2 29.8,15.6 27.7,15.6 C 25.1,15.6 23,18.2 23,21.8 C 23,24 23.8,25.6 23.8,25.6 L 20.5,39.5 C 19.5,43.8 20.8,49.1 21,49.5 C 21.1,49.7 21.3,49.8 21.5,49.6 C 21.8,49.2 25.6,44.2 26.8,39.5 L 28.2,34 C 29.1,35.6 31.3,37 33.7,37 C 41.5,37 47,29.8 47,22.2 C 47,15.8 41.5,12 32,12 Z"
+          fill="#FFFFFF"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+/**
+ * TikTok Card Icon:
+ * Pitch-black card with glowing neon cyan & magenta offset note glyph
+ */
+function TikTokCardIcon() {
+  return (
+    <View style={widgetStyles.iconCenterWrap}>
+      <Svg width={64} height={64} viewBox="0 0 64 64">
+        <Rect
+          x={2}
+          y={2}
+          width={60}
+          height={60}
+          rx={18}
+          ry={18}
+          fill="#06080C"
+          stroke="rgba(0, 242, 254, 0.28)"
+          strokeWidth={1.5}
+        />
+        <Path
+          d="M 39.5,14 C 40.7,18.2 43.6,21.2 47.8,22.2 L 47.8,27.5 C 44.5,27.3 41.7,25.8 39.5,23.8 L 39.5,37.5 C 39.5,45.2 33.2,50.8 25.8,49.8 C 20.3,49.1 16,44.2 16.2,38.5 C 16.5,32.8 21.2,28.5 27,28.8 L 27,34.2 C 24.2,34 21.8,36 21.5,38.8 C 21.2,41.8 23.6,44.5 26.7,44.5 C 29.8,44.5 32.5,42 32.5,38.5 L 32.5,14 L 39.5,14 Z"
+          fill="#00F2FE"
+          transform="translate(-1.5, -1)"
+          opacity={0.88}
+        />
+        <Path
+          d="M 39.5,14 C 40.7,18.2 43.6,21.2 47.8,22.2 L 47.8,27.5 C 44.5,27.3 41.7,25.8 39.5,23.8 L 39.5,37.5 C 39.5,45.2 33.2,50.8 25.8,49.8 C 20.3,49.1 16,44.2 16.2,38.5 C 16.5,32.8 21.2,28.5 27,28.8 L 27,34.2 C 24.2,34 21.8,36 21.5,38.8 C 21.2,41.8 23.6,44.5 26.7,44.5 C 29.8,44.5 32.5,42 32.5,38.5 L 32.5,14 L 39.5,14 Z"
+          fill="#FE2C55"
+          transform="translate(1.5, 1)"
+          opacity={0.88}
+        />
+        <Path
+          d="M 39.5,14 C 40.7,18.2 43.6,21.2 47.8,22.2 L 47.8,27.5 C 44.5,27.3 41.7,25.8 39.5,23.8 L 39.5,37.5 C 39.5,45.2 33.2,50.8 25.8,49.8 C 20.3,49.1 16,44.2 16.2,38.5 C 16.5,32.8 21.2,28.5 27,28.8 L 27,34.2 C 24.2,34 21.8,36 21.5,38.8 C 21.2,41.8 23.6,44.5 26.7,44.5 C 29.8,44.5 32.5,42 32.5,38.5 L 32.5,14 L 39.5,14 Z"
+          fill="#FFFFFF"
+        />
+      </Svg>
+    </View>
+  );
+}
+
 const widgetStyles = StyleSheet.create({
   iconCenterWrap: {
     alignItems: 'center',
@@ -922,8 +1108,11 @@ const s = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
-  mainContainer: {
+  mainScrollView: {
     flex: 1,
+    width: '100%',
+  },
+  mainContainer: {
     alignItems: 'center',
   },
 
@@ -955,7 +1144,7 @@ const s = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // 2x2 Grid
+  // 2x3 Grid
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -996,6 +1185,18 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.14)',
   },
+  // Card 5: Pinterest
+  pinCard: {
+    backgroundColor: '#140608',
+    borderWidth: 1,
+    borderColor: 'rgba(230, 0, 35, 0.26)',
+  },
+  // Card 6: TikTok
+  ttCard: {
+    backgroundColor: '#060B12',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.24)',
+  },
 
   // Card Header & Title Row
   cardHeader: {
@@ -1033,6 +1234,12 @@ const s = StyleSheet.create({
   },
   twitterBadge: {
     backgroundColor: 'rgba(255, 255, 255, 0.16)',
+  },
+  pinBadge: {
+    backgroundColor: 'rgba(230, 0, 35, 0.22)',
+  },
+  ttBadge: {
+    backgroundColor: 'rgba(0, 242, 254, 0.2)',
   },
 
   graphicBox: {
