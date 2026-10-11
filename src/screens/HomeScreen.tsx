@@ -126,6 +126,7 @@ export default function HomeScreen() {
     setFilter: setHistoryFilter,
     filteredItems: historyFilteredItems,
     addHistoryItem,
+    updateHistoryItem,
     removeHistoryItem,
   } = useDownloadHistory();
 
@@ -177,14 +178,20 @@ export default function HomeScreen() {
   // Keep video source synced with media result (exclude YouTube to prevent streaming)
   useEffect(() => {
     if (singleResult?.type === 'video' && singleResult.url && singleResult.platform !== 'youtube') {
-      if (typeof (videoPlayer as any).replaceAsync === 'function') {
-        (videoPlayer as any).replaceAsync(singleResult.url).catch(() => {});
-      } else {
-        videoPlayer.replace(singleResult.url);
-      }
-      videoPlayer.play();
+      try {
+        if (typeof (videoPlayer as any).replaceAsync === 'function') {
+          (videoPlayer as any).replaceAsync(singleResult.url).catch(() => {});
+        } else if (typeof (videoPlayer as any).replace === 'function') {
+          videoPlayer.replace(singleResult.url);
+        }
+        videoPlayer.play();
+      } catch {}
     } else {
-      videoPlayer.pause();
+      try {
+        if (videoPlayer && typeof (videoPlayer as any).pause === 'function') {
+          videoPlayer.pause();
+        }
+      } catch {}
     }
   }, [singleResult, videoPlayer]);
 
@@ -308,6 +315,13 @@ export default function HomeScreen() {
 
       if (result.ok) {
         setDownloadSuccess(true);
+        const currentLink = (urlInputRef.current || '').trim();
+        if (result.uri && currentLink) {
+          updateHistoryItem(currentLink, {
+            localUri: result.uri,
+            downloadedAt: Date.now(),
+          });
+        }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         Animated.timing(buttonColorAnim, {
           toValue: 1,
@@ -324,7 +338,7 @@ export default function HomeScreen() {
         Alert.alert('Download Failed', result.error ?? 'Unknown error occurred.');
       }
     },
-    [downloadSuccess, buttonColorAnim]
+    [downloadSuccess, buttonColorAnim, updateHistoryItem]
   );
 
   const downloadCarouselSelected = useCallback(async () => {
@@ -337,10 +351,19 @@ export default function HomeScreen() {
     setDownloading(true);
     setProgress(null);
     let successCount = 0;
+    const currentLink = (urlInputRef.current || '').trim();
 
     for (const item of toDownload) {
       const res = await downloadMedia(item.url, item.type);
-      if (res.ok) successCount++;
+      if (res.ok) {
+        successCount++;
+        if (res.uri && currentLink) {
+          updateHistoryItem(currentLink, {
+            localUri: res.uri,
+            downloadedAt: Date.now(),
+          });
+        }
+      }
     }
 
     setDownloading(false);
@@ -351,11 +374,15 @@ export default function HomeScreen() {
     } else {
       Alert.alert('Download Incomplete', `Saved ${successCount} of ${toDownload.length} items.`);
     }
-  }, [carouselItems]);
+  }, [carouselItems, updateHistoryItem]);
 
   // Reset to idle screen
   const reset = useCallback(() => {
-    videoPlayer.pause();
+    try {
+      if (videoPlayer && typeof (videoPlayer as any).pause === 'function') {
+        videoPlayer.pause();
+      }
+    } catch {}
     transitionToPhase('idle', () => {
       setUrlInput('');
       setSingleResult(null);
@@ -461,6 +488,10 @@ export default function HomeScreen() {
             onPress: () => navigateWithCascade('Downloads'),
           },
           {
+            label: 'History (3D Spiral)',
+            onPress: () => navigateWithCascade('History'),
+          },
+          {
             label: 'Theme Studio (Arc Dial)',
             onPress: () => navigateWithCascade('Theme'),
           },
@@ -479,20 +510,8 @@ export default function HomeScreen() {
             onPress: () => navigateWithCascade('About'),
           },
         ]}
-        socialLinks={[
-          {
-            label: 'Twitter / X (@abhi3hekk)',
-            href: 'https://x.com/abhi3hekk',
-          },
-          {
-            label: 'GitHub Repository',
-            href: 'https://github.com/AbhishekS04/anyfetch-expo',
-          },
-          {
-            label: 'Report an Issue',
-            href: 'https://github.com/AbhishekS04/anyfetch-expo/issues',
-          },
-        ]}
+        githubCard={false}
+        twitterCard={false}
       />
 
       <Animated.View
@@ -613,8 +632,10 @@ export default function HomeScreen() {
             contentContainerStyle={[
               s.resultContent,
               {
-                paddingTop: insets.top + 88,
-                paddingBottom: Math.max(insets.bottom, 24) + 64,
+                flexGrow: 1,
+                justifyContent: 'center',
+                paddingTop: insets.top + 72,
+                paddingBottom: Math.max(insets.bottom, 24) + 72,
               },
             ]}
             showsVerticalScrollIndicator={false}>
@@ -655,9 +676,9 @@ export default function HomeScreen() {
                 ) : singleResult.type === 'video' ? (
                   <CustomVideoPlayer
                     player={videoPlayer}
-                    height={320}
                     thumbnailUrl={singleResult.thumbnail}
                     themeColor={themeColors.primary}
+                    platform={singleResult.platform}
                   />
                 ) : singleResult.thumbnail ? (
                   <View style={s.imageCard}>
@@ -895,6 +916,8 @@ const s = StyleSheet.create({
   },
   mediaContainer: {
     width: '100%',
+    maxWidth: 440,
+    alignSelf: 'center',
     alignItems: 'center',
     gap: 12,
   },

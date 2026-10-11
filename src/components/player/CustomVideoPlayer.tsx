@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -13,38 +13,168 @@ import {
 import { VideoPlayer, VideoView } from 'expo-video';
 import { useEvent } from 'expo';
 import {
-  Backward,
-  Forward,
   Play,
   Pause,
   VolumeCross,
   VolumeHigh,
-  Repeat,
 } from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
-import { formatTime } from '../../utils/time';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const DEFAULT_VIDEO_HEIGHT = Math.round((SCREEN_WIDTH - 40) * (9 / 16));
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const CONTAINER_WIDTH = Math.min(SCREEN_WIDTH - 40, 440);
+const MAX_PLAYER_HEIGHT = Math.min(Math.round(SCREEN_HEIGHT * 0.58), 510);
+const MIN_PLAYER_HEIGHT = 136;
+
+function getInitialRatio(platformName?: string): number {
+  const p = (platformName || '').toLowerCase();
+  if (p === 'instagram' || p === 'tiktok' || p === 'snapchat' || p === 'reels' || p === 'shorts') {
+    return 9 / 16;
+  }
+  return 16 / 9;
+}
 
 interface CustomVideoPlayerProps {
   player: VideoPlayer;
   height?: number;
   thumbnailUrl?: string;
   themeColor?: string;
+  platform?: string;
 }
 
 export default function CustomVideoPlayer({
   player,
-  height = DEFAULT_VIDEO_HEIGHT,
+  height,
   thumbnailUrl,
   themeColor = '#FF9F0A',
+  platform,
 }: CustomVideoPlayerProps) {
   const [controlsVisible, setControlsVisible] = useState(true);
   const controlsOpacity = useRef(new Animated.Value(1)).current;
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekerWidthRef = useRef(0);
-  const [isLooping, setIsLooping] = useState(true);
+
+  // Set looping by default
+  useEffect(() => {
+    player.loop = true;
+  }, [player]);
+
+  // ── Automatic Aspect Ratio Detection & Transition ──────────────────────────
+  const initialRatio = useMemo(() => getInitialRatio(platform), [platform]);
+  const [detectedRatio, setDetectedRatio] = useState<number | null>(null);
+
+  // Reset detected ratio when media source changes
+  useEffect(() => {
+    setDetectedRatio(null);
+  }, [thumbnailUrl, platform]);
+
+  // 1. Detect from thumbnail dimensions if available
+  useEffect(() => {
+    if (!thumbnailUrl) return;
+    let isMounted = true;
+    Image.getSize(
+      thumbnailUrl,
+      (w, h) => {
+        if (isMounted && w > 0 && h > 0) {
+          setDetectedRatio(w / h);
+        }
+      },
+      () => {}
+    );
+    return () => {
+      isMounted = false;
+    };
+  }, [thumbnailUrl]);
+
+  // 2. Detect from expo-video sourceLoad track metadata
+  const sourceLoadEvent = useEvent(player, 'sourceLoad');
+  useEffect(() => {
+    try {
+      const tracks = (sourceLoadEvent as any)?.availableVideoTracks;
+      if (tracks && tracks.length > 0) {
+        const { width: w, height: h } = tracks[0].size || {};
+        if (w && h && w > 0 && h > 0) {
+          setDetectedRatio(w / h);
+        }
+      }
+    } catch {}
+  }, [sourceLoadEvent]);
+
+  // 3. Fallback on videoTrackChange
+  const videoTrackEvent = useEvent(player, 'videoTrackChange');
+  useEffect(() => {
+    try {
+      const size = (videoTrackEvent as any)?.videoTrack?.size;
+      if (size && size.width > 0 && size.height > 0) {
+        setDetectedRatio(size.width / size.height);
+      }
+    } catch {}
+  }, [videoTrackEvent]);
+
+  // 4. Check direct player properties if already loaded
+  useEffect(() => {
+    try {
+      const track = (player as any).videoTrack;
+      if (track?.size?.width && track?.size?.height && track.size.width > 0 && track.size.height > 0) {
+        setDetectedRatio(track.size.width / track.size.height);
+        return;
+      }
+      const tracks = (player as any).availableVideoTracks;
+      if (tracks && tracks.length > 0) {
+        const { width: w, height: h } = tracks[0]?.size || {};
+        if (w && h && w > 0 && h > 0) {
+          setDetectedRatio(w / h);
+        }
+      }
+    } catch {}
+  }, [player]);
+
+  const activeRatio = detectedRatio ?? initialRatio;
+
+  // Compute exact aspect-ratio-matched dimensions to eliminate black bars
+  const { targetWidth, targetHeight } = useMemo(() => {
+    if (height) {
+      return { targetWidth: CONTAINER_WIDTH, targetHeight: height };
+    }
+    const ratio = activeRatio && activeRatio > 0 ? activeRatio : 16 / 9;
+    const maxW = CONTAINER_WIDTH;
+    const maxH = MAX_PLAYER_HEIGHT;
+
+    let w = maxW;
+    let h = Math.round(w / ratio);
+
+    if (h > maxH) {
+      // Tall / vertical reel: clamp height and scale width to hug video tightly with zero black bars
+      h = maxH;
+      w = Math.round(h * ratio);
+    } else if (h < MIN_PLAYER_HEIGHT) {
+      // Ultrawide video: clamp min height and adjust width
+      h = MIN_PLAYER_HEIGHT;
+      w = Math.min(maxW, Math.round(h * ratio));
+    }
+
+    return { targetWidth: w, targetHeight: h };
+  }, [height, activeRatio]);
+
+  // Smooth responsive animated morphing for width and height
+  const animatedWidth = useRef(new Animated.Value(targetWidth)).current;
+  const animatedHeight = useRef(new Animated.Value(targetHeight)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(animatedWidth, {
+        toValue: targetWidth,
+        friction: 9,
+        tension: 45,
+        useNativeDriver: false,
+      }),
+      Animated.spring(animatedHeight, {
+        toValue: targetHeight,
+        friction: 9,
+        tension: 45,
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [targetWidth, targetHeight, animatedWidth, animatedHeight]);
 
   // ── Player state via events ────────────────────────────────────────────────
   const playingEvent = useEvent(player, 'playingChange', { isPlaying: player.playing });
@@ -152,26 +282,6 @@ export default function CustomVideoPlayer({
     showControls(isPlaying);
   }, [player, isPlaying, showControls]);
 
-  const toggleLoop = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const next = !isLooping;
-    setIsLooping(next);
-    player.loop = next;
-    showControls(isPlaying);
-  }, [isLooping, isPlaying, player, showControls]);
-
-  const skipBackward = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    player.currentTime = Math.max(0, player.currentTime - 10);
-    showControls(isPlaying);
-  }, [player, isPlaying, showControls]);
-
-  const skipForward = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    player.currentTime = Math.min(player.duration || 0, player.currentTime + 10);
-    showControls(isPlaying);
-  }, [player, isPlaying, showControls]);
-
   const handleSeek = useCallback(
     (event: any) => {
       const { locationX } = event.nativeEvent;
@@ -195,19 +305,27 @@ export default function CustomVideoPlayer({
   const showThumbnail = Boolean(thumbnailUrl && !hasStarted);
 
   return (
-    <View style={[s.videoWrapper, { height }]}>
+    <Animated.View
+      style={[
+        s.videoWrapper,
+        {
+          width: animatedWidth,
+          height: animatedHeight,
+        },
+      ]}
+    >
       <VideoView
         player={player}
-        style={[s.videoView, { height }]}
+        style={[StyleSheet.absoluteFill, s.videoView]}
         nativeControls={false}
-        contentFit="contain"
+        contentFit="cover"
       />
 
       {/* Thumbnail before first frame */}
       {showThumbnail && (
         <Image
           source={{ uri: thumbnailUrl }}
-          style={[StyleSheet.absoluteFill, { width: '100%', height }]}
+          style={StyleSheet.absoluteFill}
           resizeMode="cover"
         />
       )}
@@ -216,7 +334,7 @@ export default function CustomVideoPlayer({
       {isBuffering && hasStarted && (
         <View style={s.bufferingOverlay} pointerEvents="none">
           <View style={s.glassLoadingBox}>
-            <ActivityIndicator size="large" color="#FFFFFF" />
+            <ActivityIndicator size="small" color="#FFFFFF" />
             <Text style={s.bufferingText}>Buffering…</Text>
           </View>
         </View>
@@ -228,47 +346,35 @@ export default function CustomVideoPlayer({
         onPress={handleVideoAreaPress}
       />
 
-      {/* Controls overlay — rendered above tap zone using absolute position */}
+      {/* Controls overlay — unboxed direct row: Play/Pause (left) | Progress bar (middle) | Mute (right) */}
       <Animated.View
-        style={[s.controlsOverlay, { opacity: controlsOpacity }]}
+        style={[
+          s.controlsOverlay,
+          { opacity: controlsOpacity },
+        ]}
         pointerEvents={controlsVisible ? 'box-none' : 'none'}
       >
-        {/* Center row: Skip-10, Play/Pause, Skip+10 */}
-        <View style={s.centerControlsRow} pointerEvents="box-none">
-          {isBuffering && !hasStarted ? (
-            <View style={s.glassLoadingBox}>
-              <ActivityIndicator size="large" color="#FFFFFF" />
-            </View>
-          ) : (
-            <>
-              <TouchableOpacity onPress={skipBackward} style={s.iconButton} activeOpacity={0.75}>
-                <Backward size={20} color="#FFFFFF" />
-                <Text style={s.skipText}>10s</Text>
-              </TouchableOpacity>
+        <View style={s.controlsRow} pointerEvents="box-none">
+          {/* Left: Play / Pause */}
+          <TouchableOpacity
+            onPress={togglePlayPause}
+            style={s.sideBtn}
+            activeOpacity={0.7}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            {isPlaying ? (
+              <Pause size={18} color="#FFFFFF" weight="Filled" />
+            ) : (
+              <Play size={18} color="#FFFFFF" weight="Filled" />
+            )}
+          </TouchableOpacity>
 
-              <TouchableOpacity onPress={togglePlayPause} style={s.glassPlayBtn} activeOpacity={0.75}>
-                {isPlaying ? (
-                  <Pause size={28} color="#FFFFFF" weight="Filled" />
-                ) : (
-                  <Play size={28} color="#FFFFFF" weight="Filled" />
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={skipForward} style={s.iconButton} activeOpacity={0.75}>
-                <Forward size={20} color="#FFFFFF" />
-                <Text style={s.skipText}>10s</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-
-        {/* Bottom panel: seeker + time + mute + loop */}
-        <View style={s.bottomControlsPanel} pointerEvents="box-none">
-          {/* Seeker with buffered indicator */}
+          {/* Middle: Progress bar */}
           <Pressable
             style={s.seekerContainer}
             onLayout={e => { seekerWidthRef.current = e.nativeEvent.layout.width; }}
             onPress={handleSeek}
+            hitSlop={{ top: 12, bottom: 12 }}
           >
             <View style={s.seekerBg} pointerEvents="none">
               {/* Buffered fill */}
@@ -276,73 +382,53 @@ export default function CustomVideoPlayer({
               {/* Played fill */}
               <View style={[s.seekerFill, { width: `${progressPct * 100}%` }]} />
               {/* Knob */}
-              <View style={[s.seekerKnob, { left: `${progressPct * 100}%` }]} />
+              <View
+                style={[
+                  s.seekerKnob,
+                  { left: `${progressPct * 100}%` },
+                ]}
+              />
             </View>
           </Pressable>
 
-          <View style={s.bottomPanelMetaRow} pointerEvents="box-none">
-            <Text style={s.timeText}>
-              {formatTime(currentTime)} • {formatTime(duration)}
-            </Text>
-
-            <View style={s.rightActionsRow} pointerEvents="box-none">
-              <TouchableOpacity onPress={toggleMute} style={s.glassControlBtn} activeOpacity={0.75}>
-                {isMuted ? (
-                  <VolumeCross size={14} color="#FFFFFF" />
-                ) : (
-                  <VolumeHigh size={14} color="#FFFFFF" />
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={toggleLoop}
-                style={[
-                  s.glassControlBtn,
-                  isLooping && { backgroundColor: themeColor, borderColor: themeColor },
-                ]}
-                activeOpacity={0.75}
-              >
-                <Repeat size={14} color={isLooping ? '#000000' : '#FFFFFF'} />
-              </TouchableOpacity>
-            </View>
-          </View>
+          {/* Right: Mute / Unmute */}
+          <TouchableOpacity
+            onPress={toggleMute}
+            style={s.sideBtn}
+            activeOpacity={0.7}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            {isMuted ? (
+              <VolumeCross size={18} color="#FFFFFF" />
+            ) : (
+              <VolumeHigh size={18} color="#FFFFFF" />
+            )}
+          </TouchableOpacity>
         </View>
       </Animated.View>
-    </View>
+    </Animated.View>
   );
 }
 
 const s = StyleSheet.create({
   videoWrapper: {
     position: 'relative',
-    width: '100%',
     borderRadius: 20,
     overflow: 'hidden',
     backgroundColor: '#000000',
     borderWidth: 1,
-    borderColor: '#1C1C1E',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    alignSelf: 'center',
   },
   videoView: {
     width: '100%',
+    height: '100%',
   },
   bufferingOverlay: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
-  },
-  controlsOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'space-between',
-    padding: 16,
-  },
-  centerControlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 28,
-    flex: 1,
   },
   glassLoadingBox: {
     alignItems: 'center',
@@ -355,70 +441,44 @@ const s = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
-  iconButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
+  controlsOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'transparent',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
+    paddingBottom: 14,
   },
-  skipText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '800',
-    marginTop: -1,
-  },
-  glassPlayBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-  },
-  bottomControlsPanel: {
-    backgroundColor: 'rgba(15, 15, 15, 0.85)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
-  },
-  bottomPanelMetaRow: {
+  controlsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    width: '100%',
+    gap: 12,
   },
-  timeText: {
-    color: '#E5E5EA',
-    fontSize: 11,
-    fontWeight: '700',
+  sideBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   seekerContainer: {
-    width: '100%',
-    height: 20,
+    flex: 1,
+    height: 24,
     justifyContent: 'center',
   },
   seekerBg: {
     height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
     borderRadius: 2,
     position: 'relative',
     width: '100%',
   },
   seekerBuffered: {
     height: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
     borderRadius: 2,
     position: 'absolute',
     top: 0,
@@ -440,19 +500,9 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: -4,
     marginLeft: -6,
-  },
-  rightActionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  glassControlBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.4,
+    shadowRadius: 2.5,
   },
 });

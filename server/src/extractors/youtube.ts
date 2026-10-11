@@ -78,29 +78,8 @@ export async function extractYouTubeServer(
   // 2. Fetch visitorData session token via InnerTube visitor_id endpoint
   const visitorData = await getVisitorData();
 
-  // 3. Query InnerTube Clients with progressive fallback (ANDROID -> ANDROID_VR -> IOS)
+  // 3. Query InnerTube Clients with progressive fallback (ANDROID_VR first for direct adaptive HD/4K)
   const innertubeClients = [
-    {
-      name: 'ANDROID',
-      headers: {
-        'User-Agent':
-          'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
-        'X-YouTube-Client-Name': '3',
-        'X-YouTube-Client-Version': '21.26.364',
-      },
-      context: {
-        client: {
-          clientName: 'ANDROID',
-          clientVersion: '21.26.364',
-          androidSdkVersion: 30,
-          osName: 'Android',
-          osVersion: '11',
-          hl: 'en',
-          gl: 'US',
-          ...(visitorData ? { visitorData } : {}),
-        },
-      },
-    },
     {
       name: 'ANDROID_VR',
       headers: {
@@ -118,6 +97,27 @@ export async function extractYouTubeServer(
           androidSdkVersion: 32,
           osName: 'Android',
           osVersion: '12L',
+          hl: 'en',
+          gl: 'US',
+          ...(visitorData ? { visitorData } : {}),
+        },
+      },
+    },
+    {
+      name: 'ANDROID',
+      headers: {
+        'User-Agent':
+          'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
+        'X-YouTube-Client-Name': '3',
+        'X-YouTube-Client-Version': '21.26.364',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID',
+          clientVersion: '21.26.364',
+          androidSdkVersion: 30,
+          osName: 'Android',
+          osVersion: '11',
           hl: 'en',
           gl: 'US',
           ...(visitorData ? { visitorData } : {}),
@@ -148,6 +148,7 @@ export async function extractYouTubeServer(
   ];
 
   let playerData: any = null;
+  let fallbackData: any = null;
   let lastError: string = 'Video is unavailable or private';
 
   for (const clientConfig of innertubeClients) {
@@ -166,23 +167,37 @@ export async function extractYouTubeServer(
 
       if (!playerRes.ok) continue;
       const data: any = await playerRes.json();
+      if (data?.playabilityStatus?.status !== 'OK') {
+        if (data?.playabilityStatus?.reason) lastError = data.playabilityStatus.reason;
+        continue;
+      }
+
+      const hasAdaptiveStreams = Boolean(
+        data?.streamingData &&
+          Array.isArray(data.streamingData.adaptiveFormats) &&
+          data.streamingData.adaptiveFormats.some((f: any) => f.url && f.qualityLabel)
+      );
+
       const hasDirectStreams = Boolean(
         data?.streamingData &&
           ((Array.isArray(data.streamingData.formats) &&
             data.streamingData.formats.some((f: any) => f.url)) ||
-            (Array.isArray(data.streamingData.adaptiveFormats) &&
-              data.streamingData.adaptiveFormats.some((f: any) => f.url)))
+            hasAdaptiveStreams)
       );
 
-      if (data?.playabilityStatus?.status === 'OK' && hasDirectStreams) {
+      if (hasAdaptiveStreams) {
         playerData = data;
         break;
-      } else if (data?.playabilityStatus?.reason) {
-        lastError = data.playabilityStatus.reason;
+      } else if (hasDirectStreams && !fallbackData) {
+        fallbackData = data;
       }
     } catch (e: any) {
       lastError = e?.message || lastError;
     }
+  }
+
+  if (!playerData && fallbackData) {
+    playerData = fallbackData;
   }
 
   if (!playerData) {

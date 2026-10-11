@@ -22,6 +22,7 @@ import {
   Share,
   Platform,
   BackHandler,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -35,6 +36,9 @@ import {
   InfoCircle,
   DirectRight,
   Heart,
+  Link,
+  Flash,
+  Download,
 } from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
 
@@ -48,6 +52,10 @@ import {
 } from '../components/navigation/CascadePageTransition';
 import GithubCard from '../components/common/GithubCard';
 import TwitterCard from '../components/common/TwitterCard';
+import CircuitBoard from '../components/common/CircuitBoard';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CIRCUIT_WIDTH = Math.min(Math.max(SCREEN_WIDTH - 76, 280), 380);
 
 const APP_VERSION = '1.1.1';
 const GITHUB_REPO = 'AbhishekS04/anyfetch-expo';
@@ -166,7 +174,67 @@ export default function AboutScreen() {
           </View>
         </View>
 
-        {/* ── 2. PRIVACY FIRST ARCHITECTURE ── */}
+        {/* ── 2. ON-DEVICE PIPELINE (CIRCUIT BOARD) ── */}
+        <View style={s.sectionHeader}>
+          <Flash size={15} color={appColors.accent} />
+          <Text style={s.sectionTitle}>HOW ANYFETCH WORKS</Text>
+        </View>
+        <View style={s.card}>
+          <Text style={s.cardIntro}>
+            Visualizing AnyFetch's private on-device pipeline — extracting media streams directly without third-party tracking or proxy interception:
+          </Text>
+
+          <CircuitBoard
+            width={CIRCUIT_WIDTH}
+            height={210}
+            pulseSpeed={1.9}
+            style={s.circuitCard}
+          />
+
+          <View style={s.pipelineGrid}>
+            <View style={s.pipelineItem}>
+              <View style={[s.pipelineBadge, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}>
+                <Link size={14} color="#D4D4D8" />
+              </View>
+              <View style={s.pipelineTextWrap}>
+                <Text style={s.pipelineTitle}>1. Media Link</Text>
+                <Text style={s.pipelineDesc}>Copied video or post URL</Text>
+              </View>
+            </View>
+
+            <View style={s.pipelineItem}>
+              <View style={[s.pipelineBadge, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}>
+                <Flash size={14} color="#D4D4D8" />
+              </View>
+              <View style={s.pipelineTextWrap}>
+                <Text style={s.pipelineTitle}>2. AnyFetch Engine</Text>
+                <Text style={s.pipelineDesc}>Parses 1080p, 4K & audio</Text>
+              </View>
+            </View>
+
+            <View style={s.pipelineItem}>
+              <View style={[s.pipelineBadge, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}>
+                <ShieldTick size={14} color="#D4D4D8" />
+              </View>
+              <View style={s.pipelineTextWrap}>
+                <Text style={s.pipelineTitle}>3. Privacy Guard</Text>
+                <Text style={s.pipelineDesc}>Zero trackers or logs</Text>
+              </View>
+            </View>
+
+            <View style={s.pipelineItem}>
+              <View style={[s.pipelineBadge, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}>
+                <Download size={14} color="#D4D4D8" />
+              </View>
+              <View style={s.pipelineTextWrap}>
+                <Text style={s.pipelineTitle}>4. Local Gallery</Text>
+                <Text style={s.pipelineDesc}>Saved straight to device</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* ── 3. PRIVACY FIRST ARCHITECTURE ── */}
         <View style={s.sectionHeader}>
           <ShieldTick size={15} color={appColors.accent} />
           <Text style={s.sectionTitle}>PRIVACY & ARCHITECTURE</Text>
@@ -540,6 +608,51 @@ const s = StyleSheet.create({
     color: '#A1A1AA',
     lineHeight: 19,
     marginBottom: 14,
+  },
+  circuitCard: {
+    marginBottom: 16,
+    width: '100%',
+  },
+  pipelineGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  pipelineItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexBasis: '48%',
+    flexGrow: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.025)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 12,
+    padding: 10,
+  },
+  pipelineBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pipelineTextWrap: {
+    flex: 1,
+  },
+  pipelineTitle: {
+    fontFamily: FONTS.sans,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  pipelineDesc: {
+    fontFamily: FONTS.sans,
+    fontSize: 10,
+    color: '#71717A',
+    lineHeight: 13,
   },
   cardDivider: {
     height: 1,

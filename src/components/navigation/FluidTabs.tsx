@@ -15,9 +15,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Animated,
+  Platform,
   StyleProp,
   ViewStyle,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 
 export interface FluidTabItem {
@@ -90,6 +92,17 @@ export const FluidTabs: React.FC<FluidTabsProps> = ({
 
   return (
     <View style={[styles.container, { padding }, style]}>
+      {/* ─── Translucent Frosted Glass Base ─── */}
+      <BlurView
+        tint="dark"
+        intensity={Platform.OS === 'ios' ? 60 : 35}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+
+      {/* ─── Subtle Specular Ambient Sheen ─── */}
+      <View style={styles.glassSheen} pointerEvents="none" />
+
       {/* ─── Fluid Spring Indicator Pill ─── */}
       <Animated.View
         pointerEvents="none"
@@ -151,15 +164,23 @@ export default FluidTabs;
 const styles = StyleSheet.create({
   container: {
     position: 'relative',
-    backgroundColor: 'rgba(16, 16, 20, 0.72)',
+    backgroundColor:
+      Platform.OS === 'ios'
+        ? 'rgba(16, 16, 22, 0.82)'
+        : 'rgba(18, 18, 24, 0.93)',
     borderRadius: 999,
     borderWidth: 1.2,
-    borderColor: 'rgba(255, 255, 255, 0.14)',
+    borderColor: 'rgba(255, 255, 255, 0.18)',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.45,
-    shadowRadius: 20,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.55,
+    shadowRadius: 24,
+    elevation: 16,
+    overflow: 'hidden',
+  },
+  glassSheen: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
   },
   activePill: {
     position: 'absolute',
@@ -167,7 +188,7 @@ const styles = StyleSheet.create({
     left: 0,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderColor: 'rgba(255, 255, 255, 0.26)',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.35,

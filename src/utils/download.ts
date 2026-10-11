@@ -24,11 +24,15 @@ import {
   deleteAsync,
   downloadAsync,
   getInfoAsync,
+  copyAsync,
+  makeDirectoryAsync,
   createDownloadResumable,
 } from 'expo-file-system/legacy';
 import { EncodingType } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
+
+export const DOWNLOADS_DIRECTORY = (documentDirectory ?? '') + 'downloads/';
 
 export interface DownloadProgress {
   received: number;
@@ -151,6 +155,7 @@ function buildHeaders(url: string, variant: 'bare' | 'browser' | 'android'): Rec
 
   return base;
 }
+
 
 /**
  * Download via legacy FileSystem then save via SAF or native sharing sheet.
@@ -293,13 +298,31 @@ export async function downloadMedia(
             mimeType,
           );
 
-          const base64Data = await readAsStringAsync(downloadedUri, {
-            encoding: EncodingType.Base64,
-          });
-
-          await StorageAccessFramework.writeAsStringAsync(safUri, base64Data, {
-            encoding: EncodingType.Base64,
-          });
+          // Stream to SAF in 2MB chunks to prevent Android JVM OutOfMemoryError on large files
+          const CHUNK_SIZE = 2 * 1024 * 1024;
+          if (size <= CHUNK_SIZE) {
+            const base64Data = await readAsStringAsync(downloadedUri, {
+              encoding: EncodingType.Base64,
+            });
+            await StorageAccessFramework.writeAsStringAsync(safUri, base64Data, {
+              encoding: EncodingType.Base64,
+            });
+          } else {
+            let offset = 0;
+            while (offset < size) {
+              const length = Math.min(CHUNK_SIZE, size - offset);
+              const chunk = await readAsStringAsync(downloadedUri, {
+                encoding: EncodingType.Base64,
+                position: offset,
+                length,
+              });
+              await StorageAccessFramework.writeAsStringAsync(safUri, chunk, {
+                encoding: EncodingType.Base64,
+                append: offset > 0,
+              });
+              offset += length;
+            }
+          }
 
           saved = true;
           finalPath = safUri;
@@ -308,45 +331,35 @@ export async function downloadMedia(
         }
       }
     } catch (safErr) {
-      console.warn('SAF save failed, proceeding to MediaLibrary:', safErr);
+      console.warn('SAF save failed, proceeding to storage:', safErr);
     }
 
-    // 2. Default: Save directly to Android/iOS Gallery (MediaLibrary)
+    // 2. Default: Save persistent copy for in-app offline playback & register with Gallery
     if (!saved) {
-      try {
-        let MediaLib: any = null;
-        try {
-          // Dynamic require prevents crash in Expo Go or runtimes without ExpoMediaLibraryNext
-          MediaLib = require('expo-media-library');
-        } catch (loadErr) {
-          console.warn('[MediaLibrary] Native module not present in current runtime (e.g. Expo Go):', loadErr);
-        }
+      let permanentLocalPath = downloadedUri;
 
-        if (MediaLib && typeof MediaLib.requestPermissionsAsync === 'function') {
-          const perm = await MediaLib.requestPermissionsAsync();
-          if (perm.granted || perm.status === 'granted') {
-            const asset = await MediaLib.createAssetAsync(downloadedUri);
-            try {
-              const album = await MediaLib.getAlbumAsync('AnyFetch');
-              if (!album) {
-                await MediaLib.createAlbumAsync('AnyFetch', asset, false);
-              } else {
-                await MediaLib.addAssetsToAlbumAsync([asset], album, false);
-              }
-            } catch (albumErr) {
-              // Optional album grouping; asset is already in public DCIM/Gallery
-              console.log('AnyFetch album note:', albumErr);
-            }
-            saved = true;
-            finalPath = asset.uri;
-            // Delete temporary cache file once saved to MediaStore
-            await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
-          } else {
-            console.warn('MediaLibrary permission not granted');
-          }
+      try {
+        const dirInfo = await getInfoAsync(DOWNLOADS_DIRECTORY).catch(() => null);
+        if (!dirInfo?.exists) {
+          await makeDirectoryAsync(DOWNLOADS_DIRECTORY, { intermediates: true }).catch(() => {});
         }
-      } catch (mediaErr) {
-        console.warn('MediaLibrary save error, falling back to share sheet:', mediaErr);
+        const persistentUri = DOWNLOADS_DIRECTORY + filename;
+        await copyAsync({ from: downloadedUri, to: persistentUri }).catch(() => {});
+        const pInfo = await getInfoAsync(persistentUri).catch(() => null);
+        if (pInfo?.exists && ('size' in pInfo ? (pInfo.size ?? 0) > 0 : true)) {
+          permanentLocalPath = persistentUri;
+        }
+      } catch (persistErr) {
+        console.warn('Persistent local copy note:', persistErr);
+      }
+
+      finalPath = permanentLocalPath;
+      saved = true;
+
+
+      // If downloadedUri was a temporary cache file and differs from permanent path, clean it up
+      if (downloadedUri !== permanentLocalPath) {
+        await deleteAsync(downloadedUri, { idempotent: true }).catch(() => {});
       }
     }
 

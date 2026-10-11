@@ -113,8 +113,8 @@ export const FloatingMenu = forwardRef<FloatingMenuHandle, FloatingMenuProps>(
       primaryLinks = [],
       secondaryLinks = [],
       socialLinks = [],
-      githubCard = true,
-      twitterCard = true,
+      githubCard = false,
+      twitterCard = false,
       style,
       backButton,
       onSelectLink,
@@ -132,16 +132,28 @@ export const FloatingMenu = forwardRef<FloatingMenuHandle, FloatingMenuProps>(
     const screenWidth = Dimensions.get('window').width;
     const screenHeight = Dimensions.get('window').height;
 
-    const showGithubCard = githubCard !== false;
+    const showGithubCard = Boolean(githubCard);
     const githubCardProps = typeof githubCard === 'object' ? githubCard : undefined;
-    const showTwitterCard = twitterCard !== false;
+    const showTwitterCard = Boolean(twitterCard);
     const twitterCardProps = typeof twitterCard === 'object' ? twitterCard : undefined;
 
     // Viewport-adaptive geometry
     const collapsedWidth = Math.min(320, screenWidth - 32);
     const expandedWidth = Math.min(376, screenWidth - 24);
     const collapsedHeight = 54;
-    const expandedHeight = Math.min(630, screenHeight - insets.top - insets.bottom - 28);
+
+    const contentHeight =
+      74 +
+      (primaryLinks.length > 0 ? 38 + primaryLinks.length * 44 : 0) +
+      (secondaryLinks.length > 0 ? 18 + 38 + secondaryLinks.length * 44 : 0) +
+      (showGithubCard ? 155 : 0) +
+      (showTwitterCard ? 135 : 0) +
+      (socialLinks.length > 0 ? 18 + 38 + socialLinks.length * 42 : 0);
+
+    const expandedHeight = Math.min(
+      contentHeight,
+      screenHeight - insets.top - insets.bottom - 28
+    );
 
     const toggleOpen = useCallback((nextState?: boolean) => {
       const target = nextState !== undefined ? nextState : !isOpen;

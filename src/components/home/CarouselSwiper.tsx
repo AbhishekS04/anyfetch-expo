@@ -85,16 +85,24 @@ export default function CarouselSwiper({
 
   const togglePlayPause = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (isPlaying) {
-      videoPlayer.pause();
-    } else {
-      videoPlayer.play();
-    }
+    try {
+      if (isPlaying) {
+        if (typeof (videoPlayer as any)?.pause === 'function') {
+          videoPlayer.pause();
+        }
+      } else {
+        if (typeof (videoPlayer as any)?.play === 'function') {
+          videoPlayer.play();
+        }
+      }
+    } catch {}
   };
 
   const toggleMute = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    videoPlayer.muted = !videoPlayer.muted;
+    try {
+      videoPlayer.muted = !videoPlayer.muted;
+    } catch {}
   };
 
   return (

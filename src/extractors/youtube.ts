@@ -159,26 +159,6 @@ async function fetchInnertubeStreams(
 
   const innertubeClients = [
     {
-      name: 'ANDROID',
-      headers: {
-        'User-Agent': 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
-        'X-YouTube-Client-Name': '3',
-        'X-YouTube-Client-Version': '21.26.364',
-      },
-      context: {
-        client: {
-          clientName: 'ANDROID',
-          clientVersion: '21.26.364',
-          androidSdkVersion: 30,
-          osName: 'Android',
-          osVersion: '11',
-          hl: 'en',
-          gl: 'US',
-          ...(visitorData ? { visitorData } : {}),
-        },
-      },
-    },
-    {
       name: 'ANDROID_VR',
       headers: {
         'User-Agent':
@@ -195,6 +175,26 @@ async function fetchInnertubeStreams(
           androidSdkVersion: 32,
           osName: 'Android',
           osVersion: '12L',
+          hl: 'en',
+          gl: 'US',
+          ...(visitorData ? { visitorData } : {}),
+        },
+      },
+    },
+    {
+      name: 'ANDROID',
+      headers: {
+        'User-Agent': 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
+        'X-YouTube-Client-Name': '3',
+        'X-YouTube-Client-Version': '21.26.364',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID',
+          clientVersion: '21.26.364',
+          androidSdkVersion: 30,
+          osName: 'Android',
+          osVersion: '11',
           hl: 'en',
           gl: 'US',
           ...(visitorData ? { visitorData } : {}),
@@ -222,6 +222,14 @@ async function fetchInnertubeStreams(
       },
     },
   ];
+
+  let fallbackResult: {
+    title?: string;
+    author?: string;
+    duration?: number;
+    thumbnail?: string;
+    qualities: YtQualityOption[];
+  } | null = null;
 
   for (const clientConfig of innertubeClients) {
     try {
@@ -287,22 +295,55 @@ async function fetchInnertubeStreams(
         (details?.title || 'youtube_video').replace(/[^a-zA-Z0-9_\-\s]/g, '').trim() || 'youtube_video'
       );
 
-      // If Cloud API is reachable and audio exists, construct muxed HD options (1080p, 720p, etc.)
-      // CRITICAL: NEVER output un-muxed adaptive video streams as download options because they have NO AUDIO!
+      // If Cloud API is reachable and audio exists, construct muxed HD options (4K, 2K, 1080p, 720p, 480p, etc.)
       if (apiUrl && bestAudioUrl && Array.isArray(streamingData.adaptiveFormats)) {
-        for (const fmt of streamingData.adaptiveFormats) {
-          if (fmt.url && fmt.mimeType?.includes('video/mp4') && fmt.qualityLabel) {
-            const cleanId = fmt.qualityLabel.toLowerCase().replace(/[^0-9a-z]/g, '');
-            if (!qualities.some(q => q.id === cleanId)) {
-              qualities.push({
-                id: cleanId,
-                label: `${fmt.qualityLabel} HD (Cloud Mux)`,
-                resolution: fmt.qualityLabel,
-                type: 'video',
-                url: `${apiUrl}/api/stream?video=${encodeURIComponent(fmt.url)}&audio=${encodeURIComponent(bestAudioUrl)}&title=${safeTitle}_${cleanId}.mp4`,
-                container: 'mp4',
-              });
-            }
+        const videoAdaptive = streamingData.adaptiveFormats.filter(
+          (f: any) => f.url && f.qualityLabel && typeof f.qualityLabel === 'string'
+        );
+
+        // Group by resolution number, prioritizing video/mp4 (H.264/AVC) over webm
+        const resMap = new Map<number, any>();
+        for (const vf of videoAdaptive) {
+          const resNum = parseInt(vf.qualityLabel, 10);
+          if (!resNum) continue;
+
+          const isMp4 = vf.mimeType?.includes('video/mp4');
+          const existing = resMap.get(resNum);
+
+          if (!existing) {
+            resMap.set(resNum, vf);
+          } else if (!existing.mimeType?.includes('video/mp4') && isMp4) {
+            resMap.set(resNum, vf);
+          } else if (isMp4 && vf.fps && existing.fps && vf.fps > existing.fps) {
+            resMap.set(resNum, vf);
+          }
+        }
+
+        const sortedResNums = Array.from(resMap.keys()).sort((a, b) => b - a);
+
+        for (const resNum of sortedResNums) {
+          const vf = resMap.get(resNum);
+          const qId = `${resNum}p`;
+          let label = `${resNum}p`;
+          if (resNum >= 2160) label = `4K (${resNum}p)`;
+          else if (resNum >= 1440) label = `2K (${resNum}p)`;
+          else if (resNum >= 1080) label = `1080p HD`;
+          else if (resNum >= 720) label = `720p HD`;
+          else if (resNum >= 480) label = `480p SD`;
+
+          if (vf.fps && vf.fps > 30) {
+            label += ` (${vf.fps}fps)`;
+          }
+
+          if (!qualities.some(q => q.id === qId)) {
+            qualities.push({
+              id: qId,
+              label: `${label} (Cloud Mux)`,
+              resolution: `${resNum}p`,
+              type: 'video',
+              url: `${apiUrl}/api/stream?video=${encodeURIComponent(vf.url)}&audio=${encodeURIComponent(bestAudioUrl)}&title=${safeTitle}_${qId}.mp4`,
+              container: 'mp4',
+            });
           }
         }
       }
@@ -334,17 +375,29 @@ async function fetchInnertubeStreams(
         if (Array.isArray(details?.thumbnail?.thumbnails) && details.thumbnail.thumbnails.length > 0) {
           bestThumb = details.thumbnail.thumbnails[details.thumbnail.thumbnails.length - 1]?.url;
         }
-        return {
+        const currentResult = {
           title: details?.title,
           author: details?.author,
           duration: details?.lengthSeconds ? parseInt(details.lengthSeconds, 10) : undefined,
           thumbnail: bestThumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
           qualities,
         };
+
+        // If client returned HD streams (>= 720p or multiple qualities), return immediately
+        const hasHd = qualities.some(q => q.id === '1080p' || q.id === '720p' || q.id === '2160p' || q.id === '1440p');
+        if (hasHd || qualities.length > 2) {
+          return currentResult;
+        } else if (!fallbackResult) {
+          fallbackResult = currentResult;
+        }
       }
     } catch {
       // try next client
     }
+  }
+
+  if (fallbackResult) {
+    return fallbackResult;
   }
 
   return null;
@@ -448,16 +501,19 @@ export async function extractYouTube(rawInput: string): Promise<YtExtractResult>
     );
   }
 
-  // Sort qualities: 1080p -> 720p -> 480p -> 360p -> 240p -> 144p -> audio -> m4a
+  // Sort qualities: 4K (2160p) -> 2K (1440p) -> 1080p -> 720p -> 480p -> 360p -> 240p -> 144p -> audio -> m4a
   const order: Record<string, number> = {
-    '1080p': 1,
-    '720p': 2,
-    '480p': 3,
-    '360p': 4,
-    '240p': 5,
-    '144p': 6,
-    'audio': 7,
-    'm4a': 8,
+    '2160p': 1,
+    '1440p': 2,
+    '1080p': 3,
+    '720p': 4,
+    '480p': 5,
+    '360p': 6,
+    '360p_direct': 7,
+    '240p': 8,
+    '144p': 9,
+    'audio': 10,
+    'm4a': 11,
   };
   discoveredStreams.sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
 

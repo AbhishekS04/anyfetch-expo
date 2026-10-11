@@ -31,9 +31,19 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   Platform,
+  ActivityIndicator,
+  PanResponder,
+  Easing,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import {
+  documentDirectory,
+  cacheDirectory,
+  getInfoAsync,
+  readDirectoryAsync,
+} from 'expo-file-system/legacy';
 import Svg, {
   Circle,
   Path,
@@ -49,6 +59,7 @@ import { Trash, Play, Share as ShareIcon } from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
 
 import { useDownloadHistory, HistoryItem } from '../hooks/useDownloadHistory';
+import { downloadMedia, DOWNLOADS_DIRECTORY } from '../utils/download';
 import BottomTabBar, { TabRoute } from '../components/navigation/BottomTabBar';
 import {
   useCascadeNavigation,
@@ -63,6 +74,14 @@ const GRID_PADDING = 20;
 const GRID_GAP = 14;
 const CARD_WIDTH = Math.round((SCREEN_WIDTH - GRID_PADDING * 2 - GRID_GAP) / 2);
 const CARD_HEIGHT = Math.round(CARD_WIDTH * 1.16);
+
+// Responsive Hero Card dimensions (Prevents vertical squeezing & dialer clipping)
+const HERO_WIDTH = Math.min(SCREEN_WIDTH - 48, 330);
+const MAX_HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.44);
+const HERO_HEIGHT = Math.min(Math.round(HERO_WIDTH * 1.18), MAX_HERO_HEIGHT);
+const HERO_GAP = 14;
+const HERO_SNAP_INTERVAL = HERO_WIDTH + HERO_GAP;
+const HERO_PADDING_HORIZONTAL = Math.round((SCREEN_WIDTH - HERO_WIDTH) / 2);
 
 // Dialer dimensions
 const DIALER_ITEM_WIDTH = 58;
@@ -79,6 +98,7 @@ export interface CategoryMediaItem {
   date: string;
   src: string;
   url?: string;
+  localUri?: string;
   duration?: string;
   platform: PlatformCategory;
   historyRef?: HistoryItem;
@@ -361,16 +381,65 @@ export default function DownloadsScreen() {
   const { navigateWithCascade } = useCascadeNavigation();
   useCascadeBackTransition(navigation);
 
-  const { history, removeHistoryItem } = useDownloadHistory();
+  const { history, removeHistoryItem, updateHistoryItem } = useDownloadHistory();
 
   // Active Category State
   const [selectedCategory, setSelectedCategory] = useState<PlatformCategory | null>(null);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
 
-  // Animated viewer visibility
+  // In-place Video Player with safe wrappers
+  const videoPlayer = useVideoPlayer('', p => {
+    p.loop = true;
+    p.timeUpdateEventInterval = 0.25;
+  });
+  const [isPlayingInline, setIsPlayingInline] = useState(false);
+  const [localPlayableUri, setLocalPlayableUri] = useState<string | null>(null);
+  const [isCheckingMedia, setIsCheckingMedia] = useState(false);
+
+  const isPlayerUsable = useCallback(() => {
+    try {
+      return Boolean(videoPlayer && typeof (videoPlayer as any).pause === 'function');
+    } catch {
+      return false;
+    }
+  }, [videoPlayer]);
+
+  const safePause = useCallback(() => {
+    try {
+      if (isPlayerUsable()) {
+        videoPlayer.pause();
+      }
+    } catch {}
+  }, [videoPlayer, isPlayerUsable]);
+
+  const safePlay = useCallback(() => {
+    try {
+      if (isPlayerUsable()) {
+        videoPlayer.play();
+      }
+    } catch {}
+  }, [videoPlayer, isPlayerUsable]);
+
+  const safeReplace = useCallback(
+    async (uri: string) => {
+      try {
+        if (typeof (videoPlayer as any).replaceAsync === 'function') {
+          await (videoPlayer as any).replaceAsync(uri);
+        } else if (typeof (videoPlayer as any).replace === 'function') {
+          videoPlayer.replace(uri);
+        }
+      } catch {}
+    },
+    [videoPlayer]
+  );
+
+  // Animated viewer visibility & synchronized scroll state
   const viewerAnim = useRef(new Animated.Value(0)).current;
   const dialerScrollRef = useRef<ScrollView>(null);
-  const scrollX = useRef(new Animated.Value(0)).current;
+  const heroScrollRef = useRef<ScrollView>(null);
+  const dialerScrollX = useRef(new Animated.Value(0)).current;
+  const heroScrollX = useRef(new Animated.Value(0)).current;
+  const isSyncingRef = useRef(false);
 
   // Intercept Android hardware back: close category viewer if open, otherwise return smoothly to Home
   useEffect(() => {
@@ -459,13 +528,13 @@ export default function DownloadsScreen() {
         item.singleResult?.title ||
         `${plat.charAt(0).toUpperCase() + plat.slice(1)} Download #${idx + 1}`;
 
-      const dateStr = (item as any).downloadedAt
-        ? new Date((item as any).downloadedAt).toLocaleDateString('en-US', {
+      const dateStr = item.downloadedAt
+        ? new Date(item.downloadedAt).toLocaleDateString('en-US', {
             day: 'numeric',
             month: 'short',
             year: 'numeric',
           })
-        : 'Recent Download';
+        : '';
 
       map[plat].unshift({
         id: item.url || `history-${idx}`,
@@ -473,6 +542,7 @@ export default function DownloadsScreen() {
         date: dateStr,
         src: thumb,
         url: item.url,
+        localUri: item.localUri,
         platform: plat,
         historyRef: item,
       });
@@ -499,26 +569,35 @@ export default function DownloadsScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setSelectedCategory(cat);
     setActiveMediaIndex(0);
-    scrollX.setValue(0);
+    activeMediaIndexRef.current = 0;
+    setIsPlayingInline(false);
+    setLocalPlayableUri(null);
+    dialerScrollX.setValue(0);
+    heroScrollX.setValue(0);
 
-    Animated.spring(viewerAnim, {
+    Animated.timing(viewerAnim, {
       toValue: 1,
-      tension: 65,
-      friction: 10,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
 
-    // Reset dialer position
+    // Reset scroll positions
     requestAnimationFrame(() => {
       dialerScrollRef.current?.scrollTo({ x: 0, animated: false });
+      heroScrollRef.current?.scrollTo({ x: 0, animated: false });
     });
   };
 
   const closeCategoryViewer = () => {
+    safePause();
+    setIsPlayingInline(false);
+    setLocalPlayableUri(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Animated.timing(viewerAnim, {
       toValue: 0,
       duration: 220,
+      easing: Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start(() => {
       setSelectedCategory(null);
@@ -538,6 +617,9 @@ export default function DownloadsScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
+            safePause();
+            setIsPlayingInline(false);
+            setLocalPlayableUri(null);
             if (activeMedia.historyRef?.url) {
               removeHistoryItem(activeMedia.historyRef.url);
             }
@@ -547,8 +629,13 @@ export default function DownloadsScreen() {
             } else {
               const nextIdx = Math.max(0, activeMediaIndex - 1);
               setActiveMediaIndex(nextIdx);
+              activeMediaIndexRef.current = nextIdx;
               dialerScrollRef.current?.scrollTo({
                 x: nextIdx * DIALER_SNAP_INTERVAL,
+                animated: true,
+              });
+              heroScrollRef.current?.scrollTo({
+                x: nextIdx * HERO_SNAP_INTERVAL,
                 animated: true,
               });
             }
@@ -558,18 +645,185 @@ export default function DownloadsScreen() {
     );
   };
 
-  const handlePlayMedia = () => {
-    if (!activeMedia) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    if (activeMedia.url) {
-      Linking.openURL(activeMedia.url).catch(() => {});
-    } else {
-      Alert.alert('Preview Media', `Playing "${activeMedia.title}"`);
+  // Strictly check if media file actually exists on the device storage
+  const findMediaOnDevice = useCallback(
+    async (media: CategoryMediaItem): Promise<string | null> => {
+      // 1. Direct localUri recorded on the item
+      const targetLocalUri = media.localUri || media.historyRef?.localUri;
+      if (targetLocalUri) {
+        try {
+          const info = await getInfoAsync(targetLocalUri);
+          if (info.exists && (info.size == null || info.size > 0)) {
+            return targetLocalUri;
+          }
+        } catch {}
+      }
+
+      // 2. Check in app's persistent downloads directory
+      try {
+        const downloadsDir = DOWNLOADS_DIRECTORY;
+        const dirInfo = await getInfoAsync(downloadsDir).catch(() => null);
+        if (dirInfo?.exists) {
+          const files = await readDirectoryAsync(downloadsDir);
+          const rawUrl = media.historyRef?.url || media.url || '';
+          const clean = rawUrl.split('?')[0];
+          const seg = clean.split('/').filter(Boolean).pop()?.replace(/[^a-zA-Z0-9_-]/g, '');
+
+          if (seg && seg.length >= 4) {
+            const matchedFile = files.find(f => f.includes(seg));
+            if (matchedFile) {
+              const fullUri = downloadsDir + matchedFile;
+              const fInfo = await getInfoAsync(fullUri);
+              if (fInfo.exists && (fInfo.size == null || fInfo.size > 0)) {
+                return fullUri;
+              }
+            }
+          }
+        }
+      } catch {}
+
+      // 3. Check in cache directory
+      try {
+        if (cacheDirectory) {
+          const rawUrl = media.historyRef?.url || media.url || '';
+          const clean = rawUrl.split('?')[0];
+          const seg = clean.split('/').filter(Boolean).pop()?.replace(/[^a-zA-Z0-9_-]/g, '');
+          if (seg && seg.length >= 4) {
+            const files = await readDirectoryAsync(cacheDirectory).catch(() => []);
+            const matchedCache = files.find(f => f.startsWith('anyfetch_') && f.includes(seg));
+            if (matchedCache) {
+              const fullUri = cacheDirectory + matchedCache;
+              const cInfo = await getInfoAsync(fullUri);
+              if (cInfo.exists && (cInfo.size ?? 0) > 50000) {
+                return fullUri;
+              }
+            }
+          }
+        }
+      } catch {}
+
+      return null;
+    },
+    []
+  );
+
+  const handleDownloadAndPlay = async (media: CategoryMediaItem) => {
+    const directUrl = media.historyRef?.singleResult?.url;
+    if (!directUrl) return;
+
+    setIsCheckingMedia(true);
+    try {
+      const res = await downloadMedia(directUrl, 'video');
+      if (res.ok && res.uri) {
+        if (media.historyRef?.url) {
+          updateHistoryItem(media.historyRef.url, {
+            localUri: res.uri,
+            downloadedAt: Date.now(),
+          });
+        }
+        setLocalPlayableUri(res.uri);
+        await safeReplace(res.uri);
+        safePlay();
+        setIsPlayingInline(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      } else {
+        Alert.alert('Download Failed', res.error || 'Could not save video to device.');
+      }
+    } catch (e: any) {
+      Alert.alert('Download Error', e?.message || 'Download failed.');
+    } finally {
+      setIsCheckingMedia(false);
     }
   };
 
-  const handleDialerScroll = useCallback(
+  const handlePlayMedia = async (targetMedia?: CategoryMediaItem, targetIndex?: number) => {
+    const media = targetMedia || activeMedia;
+    if (!media) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    if (targetIndex !== undefined && targetIndex !== activeMediaIndexRef.current) {
+      handleSelectThumbnail(targetIndex);
+    }
+
+    setIsCheckingMedia(true);
+    try {
+      const onDeviceUri = await findMediaOnDevice(media);
+
+      if (!onDeviceUri) {
+        setIsCheckingMedia(false);
+        const canDownload = Boolean(media.historyRef?.singleResult?.url);
+        Alert.alert(
+          'Video Not On Device',
+          'This video has not been downloaded to your device storage yet. Download it first to play offline.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            ...(canDownload
+              ? [
+                  {
+                    text: 'Download Now',
+                    onPress: () => handleDownloadAndPlay(media),
+                  },
+                ]
+              : []),
+          ]
+        );
+        return;
+      }
+
+      // Media is on device! Play in-place inside the hero card
+      setLocalPlayableUri(onDeviceUri);
+      await safeReplace(onDeviceUri);
+      safePlay();
+      setIsPlayingInline(true);
+    } catch (err: any) {
+      Alert.alert('Playback Error', err?.message || 'Could not play video on device.');
+    } finally {
+      setIsCheckingMedia(false);
+    }
+  };
+
+  const activeMediaIndexRef = useRef(0);
+
+  useEffect(() => {
+    activeMediaIndexRef.current = activeMediaIndex;
+  }, [activeMediaIndex]);
+
+  // Synchronized Hero momentum scroll end
+  const handleHeroScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (isSyncingRef.current) return;
+      const offsetX = e.nativeEvent.contentOffset.x;
+      const idx = Math.max(
+        0,
+        Math.min(
+          activeMediaList.length - 1,
+          Math.round(offsetX / HERO_SNAP_INTERVAL)
+        )
+      );
+      if (idx !== activeMediaIndexRef.current) {
+        activeMediaIndexRef.current = idx;
+        safePause();
+        setIsPlayingInline(false);
+        setLocalPlayableUri(null);
+        setActiveMediaIndex(idx);
+        Haptics.selectionAsync().catch(() => {});
+        isSyncingRef.current = true;
+        dialerScrollRef.current?.scrollTo({
+          x: idx * DIALER_SNAP_INTERVAL,
+          animated: true,
+        });
+        setTimeout(() => {
+          isSyncingRef.current = false;
+        }, 350);
+      }
+    },
+    [activeMediaList.length, safePause]
+  );
+
+  // Synchronized Dialer momentum scroll end
+  const handleDialerScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (isSyncingRef.current) return;
       const offsetX = e.nativeEvent.contentOffset.x;
       const idx = Math.max(
         0,
@@ -578,22 +832,51 @@ export default function DownloadsScreen() {
           Math.round(offsetX / DIALER_SNAP_INTERVAL)
         )
       );
-      if (idx !== activeMediaIndex) {
+      if (idx !== activeMediaIndexRef.current) {
+        activeMediaIndexRef.current = idx;
+        safePause();
+        setIsPlayingInline(false);
+        setLocalPlayableUri(null);
         setActiveMediaIndex(idx);
         Haptics.selectionAsync().catch(() => {});
+        isSyncingRef.current = true;
+        heroScrollRef.current?.scrollTo({
+          x: idx * HERO_SNAP_INTERVAL,
+          animated: true,
+        });
+        setTimeout(() => {
+          isSyncingRef.current = false;
+        }, 350);
       }
     },
-    [activeMediaList.length, activeMediaIndex]
+    [activeMediaList.length, safePause]
   );
 
-  const handleSelectThumbnail = (index: number) => {
-    Haptics.selectionAsync().catch(() => {});
-    setActiveMediaIndex(index);
-    dialerScrollRef.current?.scrollTo({
-      x: index * DIALER_SNAP_INTERVAL,
-      animated: true,
-    });
-  };
+  const handleSelectThumbnail = useCallback(
+    (index: number) => {
+      Haptics.selectionAsync().catch(() => {});
+      if (index !== activeMediaIndexRef.current) {
+        activeMediaIndexRef.current = index;
+        safePause();
+        setIsPlayingInline(false);
+        setLocalPlayableUri(null);
+        setActiveMediaIndex(index);
+      }
+      isSyncingRef.current = true;
+      dialerScrollRef.current?.scrollTo({
+        x: index * DIALER_SNAP_INTERVAL,
+        animated: true,
+      });
+      heroScrollRef.current?.scrollTo({
+        x: index * HERO_SNAP_INTERVAL,
+        animated: true,
+      });
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 350);
+    },
+    [safePause]
+  );
 
   const handleSelectTab = (tab: TabRoute) => {
     if (tab === 'Downloads') return;
@@ -895,36 +1178,106 @@ export default function DownloadsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Center Stage: Hero Preview Card with Play Button */}
+          {/* Center Stage: Hero Preview Carousel with Native GPU Snapping */}
           <View style={s.heroStage}>
-            {activeMedia && (
-              <View style={s.heroCard}>
-                <Image
-                  source={{ uri: activeMedia.src }}
-                  style={StyleSheet.absoluteFill}
-                  resizeMode="cover"
-                />
+            <Animated.ScrollView
+              ref={heroScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={HERO_SNAP_INTERVAL}
+              snapToAlignment="center"
+              decelerationRate="fast"
+              overScrollMode="never"
+              bounces={true}
+              scrollEventThrottle={16}
+              contentContainerStyle={{
+                paddingHorizontal: HERO_PADDING_HORIZONTAL,
+                alignItems: 'center',
+              }}
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { x: heroScrollX } } }],
+                { useNativeDriver: true }
+              )}
+              onMomentumScrollEnd={handleHeroScrollEnd}
+            >
+              {activeMediaList.map((item, index) => {
+                const isSelected = index === activeMediaIndex;
+                const inputRange = [
+                  (index - 1) * HERO_SNAP_INTERVAL,
+                  index * HERO_SNAP_INTERVAL,
+                  (index + 1) * HERO_SNAP_INTERVAL,
+                ];
+                const scale = heroScrollX.interpolate({
+                  inputRange,
+                  outputRange: [0.92, 1.0, 0.92],
+                  extrapolate: 'clamp',
+                });
+                const opacity = heroScrollX.interpolate({
+                  inputRange,
+                  outputRange: [0.65, 1.0, 0.65],
+                  extrapolate: 'clamp',
+                });
 
-                {/* Soft Vignette Overlay */}
-                <View style={s.heroImageOverlay} />
+                return (
+                  <Animated.View
+                    key={item.id}
+                    style={[
+                      s.heroCard,
+                      {
+                        width: HERO_WIDTH,
+                        height: HERO_HEIGHT,
+                        marginRight: index === activeMediaList.length - 1 ? 0 : HERO_GAP,
+                        transform: [{ scale }],
+                        opacity,
+                      },
+                    ]}
+                  >
+                    {isPlayingInline && localPlayableUri && isSelected ? (
+                      <View style={StyleSheet.absoluteFill}>
+                        <VideoView
+                          player={videoPlayer}
+                          style={StyleSheet.absoluteFill}
+                          nativeControls={true}
+                          contentFit="contain"
+                        />
+                      </View>
+                    ) : (
+                      <>
+                        <Image
+                          source={{ uri: item.src }}
+                          style={StyleSheet.absoluteFill}
+                          resizeMode="cover"
+                        />
 
-                {/* Center Frosted Glass Play Button */}
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={handlePlayMedia}
-                  style={s.playBtnWrap}
-                >
-                  <View style={s.playBtnFrosted}>
-                    <Play size={28} color="#FFFFFF" style={{ marginLeft: 3 }} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-            )}
+                        {/* Soft Vignette Overlay */}
+                        <View style={s.heroImageOverlay} />
 
-            {/* Clean Date Text (Matching Image 2: "16 May, 2025") */}
-            <Text style={s.heroDateText}>
-              {activeMedia?.date || '16 May, 2025'}
-            </Text>
+                        {/* Center Frosted Glass Play Button */}
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => handlePlayMedia(item, index)}
+                          style={s.playBtnWrap}
+                          disabled={isCheckingMedia}
+                        >
+                          <View style={s.playBtnFrosted}>
+                            {isCheckingMedia && isSelected ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <Play size={28} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </Animated.View>
+                );
+              })}
+            </Animated.ScrollView>
+
+            {/* Clean Date Text */}
+            {activeMedia?.date && activeMedia.date !== 'Recent Download' ? (
+              <Text style={s.heroDateText}>{activeMedia.date}</Text>
+            ) : null}
           </View>
 
           {/* Bottom Dialer Filmstrip Wheel (Matching Image 2) */}
@@ -932,7 +1285,7 @@ export default function DownloadsScreen() {
             style={[
               s.dialerContainer,
               {
-                paddingBottom: Math.max(insets.bottom, 16) + 8,
+                paddingBottom: Math.max(insets.bottom, 24) + 14,
               },
             ]}
           >
@@ -941,16 +1294,20 @@ export default function DownloadsScreen() {
               horizontal
               showsHorizontalScrollIndicator={false}
               snapToInterval={DIALER_SNAP_INTERVAL}
+              snapToAlignment="center"
               decelerationRate="fast"
+              overScrollMode="never"
               bounces={true}
               onScroll={Animated.event(
-                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-                { useNativeDriver: true, listener: handleDialerScroll }
+                [{ nativeEvent: { contentOffset: { x: dialerScrollX } } }],
+                { useNativeDriver: true }
               )}
+              onMomentumScrollEnd={handleDialerScrollEnd}
               scrollEventThrottle={16}
               contentContainerStyle={{
                 paddingHorizontal: DIALER_PADDING_HORIZONTAL,
                 alignItems: 'center',
+                paddingVertical: 12,
               }}
             >
               {activeMediaList.map((item, index) => {
@@ -962,13 +1319,13 @@ export default function DownloadsScreen() {
                   (index + 1) * DIALER_SNAP_INTERVAL,
                 ];
 
-                const scale = scrollX.interpolate({
+                const scale = dialerScrollX.interpolate({
                   inputRange,
                   outputRange: [0.82, 1.15, 0.82],
                   extrapolate: 'clamp',
                 });
 
-                const opacity = scrollX.interpolate({
+                const opacity = dialerScrollX.interpolate({
                   inputRange,
                   outputRange: [0.45, 1.0, 0.45],
                   extrapolate: 'clamp',
@@ -1521,13 +1878,13 @@ const s = StyleSheet.create({
 
   // Center Hero Stage
   heroStage: {
+    flex: 1,
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingBottom: 4,
   },
   heroCard: {
-    width: Math.min(SCREEN_WIDTH - 48, 350),
-    height: Math.round(Math.min(SCREEN_WIDTH - 48, 350) * 1.25),
     borderRadius: 28,
     overflow: 'hidden',
     backgroundColor: '#18181B',
@@ -1560,17 +1917,21 @@ const s = StyleSheet.create({
     fontWeight: '600',
     color: '#D4D4D8',
     letterSpacing: 0.6,
-    marginTop: 14,
+    marginTop: 12,
     textAlign: 'center',
   },
 
   // Bottom Dialer Wheel
   dialerContainer: {
-    height: 96,
+    width: '100%',
+    paddingTop: 8,
     justifyContent: 'center',
   },
   dialerTouch: {
     marginRight: DIALER_ITEM_GAP,
+    paddingVertical: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   dialerThumbCard: {
     width: DIALER_ITEM_WIDTH,
@@ -1578,11 +1939,16 @@ const s = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: '#27272A',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.15)',
   },
   dialerThumbActive: {
     borderWidth: 2,
     borderColor: '#FFFFFF',
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 6,
   },
 });

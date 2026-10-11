@@ -3,19 +3,19 @@
  *
  * Implements the Watermelon UI Fluid Tabs dock:
  * - Fluid spring-animated active indicator pill (stiffness 280, damping 25, mass 0.8)
- * - 4 neat & clean icon-only tabs: Home -> Downloads -> About -> Settings
- * - Custom reicon icons (Home, Download, InfoCircle, Setting2)
+ * - 5 neat & clean icon-only tabs: Home -> Downloads -> History -> About -> Settings
+ * - Custom reicon icons (Home, Download, Clock, InfoCircle, Setting2)
  * - Tactile spring micro-interactions and native haptics
  */
 
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Home, Download, InfoCircle, Setting2 } from 'reicon-react-native';
+import { Home, Download, Clock, InfoCircle, Setting2 } from 'reicon-react-native';
 import { useAppTheme } from '../../theme/ThemeContext';
 import FluidTabs, { FluidTabItem } from './FluidTabs';
 
-export type TabRoute = 'Home' | 'Downloads' | 'About' | 'Settings';
+export type TabRoute = 'Home' | 'Downloads' | 'History' | 'About' | 'Settings';
 
 export interface BottomTabBarProps {
   activeTab: TabRoute;
@@ -42,6 +42,10 @@ export function BottomTabBar({
       badge: downloadsCount,
     },
     {
+      id: 'History',
+      icon: ({ size, color }) => <Clock size={size} color={color} />,
+    },
+    {
       id: 'About',
       icon: ({ size, color }) => <InfoCircle size={size} color={color} />,
     },
@@ -65,10 +69,10 @@ export function BottomTabBar({
         onChange={(id) => onSelectTab(id as TabRoute)}
         activeColor={themeColors.accent || '#38bdf8'}
         inactiveColor="#71717A"
-        pillColor="rgba(255, 255, 255, 0.16)"
-        tabWidth={56}
+        pillColor="rgba(255, 255, 255, 0.22)"
+        tabWidth={52}
         tabHeight={44}
-        gap={4}
+        gap={3}
       />
     </View>
   );

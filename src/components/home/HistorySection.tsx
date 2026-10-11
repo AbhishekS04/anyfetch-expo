@@ -1,15 +1,7 @@
 import React, { useMemo } from 'react';
-import {
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { ArrowRight } from 'reicon-react-native';
-import * as Haptics from 'expo-haptics';
+import { StyleSheet, View } from 'react-native';
 import { HistoryFilter, HistoryItem } from '../../hooks/useDownloadHistory';
 import { DraggableMarquee, MarqueeItem } from './DraggableMarquee';
-import { FONTS } from '../../theme/typography';
 import { SupportedPlatform } from '../../theme/platformColors';
 
 interface HistorySectionProps {
@@ -19,7 +11,7 @@ interface HistorySectionProps {
   filteredItems?: HistoryItem[];
   onSelectItem: (item: HistoryItem) => void;
   onDeleteItem?: (url: string) => void;
-  activeColor: string;
+  activeColor?: string;
   onViewAll?: () => void;
 }
 
@@ -59,7 +51,6 @@ const CURATED_SHOWCASE_ITEMS: MarqueeItem[] = [
 export default function HistorySection({
   history,
   onSelectItem,
-  activeColor,
   onViewAll,
 }: HistorySectionProps) {
   // Convert history items to DraggableMarquee cards
@@ -79,13 +70,7 @@ export default function HistorySection({
       .filter(item => Boolean(item.src));
 
     if (userItems.length === 0) {
-      return CURATED_SHOWCASE_ITEMS;
-    }
-
-    // If user has few downloads (< 5), blend with curated showcase so the marquee is rich & full
-    if (userItems.length < 5) {
-      const needed = 6 - userItems.length;
-      return [...userItems, ...CURATED_SHOWCASE_ITEMS.slice(0, needed)];
+      return [];
     }
 
     return userItems;
@@ -99,103 +84,29 @@ export default function HistorySection({
     }
   };
 
+  if (marqueeItems.length === 0) {
+    return null;
+  }
+
   return (
     <View style={s.section}>
-      {/* Header Row */}
-      <View style={s.headerRow}>
-        <View style={s.titleRow}>
-          <Text style={s.sectionTitle}>Recent Downloads</Text>
-          {history.length > 0 && (
-            <View style={s.countBadge}>
-              <Text style={s.countBadgeText}>{history.length}</Text>
-            </View>
-          )}
-        </View>
-
-        {onViewAll && (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            delayPressIn={0}
-            style={s.viewAllBtn}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-              onViewAll();
-            }}>
-            <Text style={[s.viewAllText, { color: activeColor }]}>Open Carousel</Text>
-            <ArrowRight size={12} color={activeColor} />
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Draggable Marquee — Continuous Smooth Motion with Drag Momentum & Zero Text Clutter */}
-      <View style={s.marqueeContainer}>
-        <DraggableMarquee
-          items={marqueeItems}
-          speed={0.42}
-          itemWidth={132}
-          itemHeight={182}
-          gap={14}
-          throwMultiplier={2.2}
-          throwFriction={0.965}
-          onSelectItem={handleSelectMarqueeItem}
-        />
-      </View>
+      <DraggableMarquee
+        items={marqueeItems}
+        speed={0.42}
+        itemWidth={132}
+        itemHeight={182}
+        gap={14}
+        throwMultiplier={2.2}
+        throwFriction={0.965}
+        onSelectItem={handleSelectMarqueeItem}
+      />
     </View>
   );
 }
 
 const s = StyleSheet.create({
   section: {
-    marginTop: 22,
-    width: '100%',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    marginBottom: 14,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  sectionTitle: {
-    fontFamily: FONTS.display,
-    fontSize: 13,
-    color: '#8E8E93',
-    textTransform: 'uppercase',
-    letterSpacing: 0.9,
-    fontWeight: '600',
-  },
-  countBadge: {
-    backgroundColor: '#1E1E22',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  countBadgeText: {
-    fontFamily: FONTS.sans,
-    fontSize: 10.5,
-    color: '#A1A1AA',
-    fontWeight: '700',
-  },
-  viewAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-  },
-  viewAllText: {
-    fontFamily: FONTS.sans,
-    fontSize: 12.5,
-    fontWeight: '600',
-  },
-  marqueeContainer: {
+    marginTop: 18,
     width: '100%',
     paddingVertical: 4,
   },

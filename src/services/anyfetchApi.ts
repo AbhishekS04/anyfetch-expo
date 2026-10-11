@@ -77,7 +77,7 @@ export async function isAnyFetchApiEnabled(): Promise<boolean> {
       }
     }
   } catch {}
-  return false;
+  return true;
 }
 
 /**

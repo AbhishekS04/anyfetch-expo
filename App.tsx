@@ -17,6 +17,7 @@ import DownloadsScreen from './src/screens/DownloadsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ThemeScreen from './src/screens/ThemeScreen';
 import AboutScreen from './src/screens/AboutScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
 import { AppThemeProvider } from './src/theme/ThemeContext';
 import { FONTS } from './src/theme/typography';
 import {
@@ -30,6 +31,7 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 export type RootStack = {
   Home: undefined;
   Downloads: undefined;
+  History: undefined;
   Settings: undefined;
   Theme: undefined;
   About: undefined;
@@ -97,6 +99,11 @@ export default function App() {
                 name="Downloads"
                 component={DownloadsScreen}
                 options={{ headerShown: false, contentStyle: { backgroundColor: '#09090b' } }}
+              />
+              <Stack.Screen
+                name="History"
+                component={HistoryScreen}
+                options={{ headerShown: false, contentStyle: { backgroundColor: '#000000' } }}
               />
               <Stack.Screen
                 name="Settings"

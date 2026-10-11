@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { SupportedPlatform, PLATFORM_THEMES, DEFAULT_THEME } from '../../theme/platformColors';
+import { SupportedPlatform } from '../../theme/platformColors';
 
 export interface MarqueeItem {
   id: string | number;
@@ -187,9 +187,6 @@ export const DraggableMarquee: React.FC<DraggableMarqueeProps> = ({
         ]}
       >
         {duplicatedItems.map((item, index) => {
-          const theme = item.platform ? PLATFORM_THEMES[item.platform] : DEFAULT_THEME;
-          const badgeColor = theme?.primary || '#FF9F0A';
-
           return (
             <View
               key={`${item.id}-${index}`}
@@ -215,15 +212,6 @@ export const DraggableMarquee: React.FC<DraggableMarqueeProps> = ({
                   }}
                 >
                   <Image source={{ uri: item.src }} style={styles.cardImage} resizeMode="cover" />
-
-                  {/* Soft top and bottom glass vignette */}
-                  <View style={styles.cardVignetteTop} />
-                  <View style={styles.cardVignetteBottom} />
-
-                  {/* Clean platform emblem badge (No text, pure minimalist elegance) */}
-                  <View style={styles.platformBadge}>
-                    <View style={[styles.badgeDot, { backgroundColor: badgeColor }]} />
-                  </View>
                 </TouchableOpacity>
               )}
             </View>
@@ -269,39 +257,5 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 21,
-  },
-  cardVignetteTop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 48,
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-  },
-  cardVignetteBottom: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 48,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-  },
-  platformBadge: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(12, 12, 14, 0.72)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeDot: {
-    width: 6.5,
-    height: 6.5,
-    borderRadius: 3.25,
   },
 });

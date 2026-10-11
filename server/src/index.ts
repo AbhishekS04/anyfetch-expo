@@ -18,7 +18,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const EXTERNAL_URL = (
   process.env.EXTERNAL_URL ||
   process.env.RENDER_EXTERNAL_URL ||
-  ''
+  'https://anyfetch-api.getvoroa.com'
 ).trim();
 
 app.set('trust proxy', 1);
