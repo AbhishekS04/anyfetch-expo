@@ -484,16 +484,20 @@ export default function HomeScreen() {
             },
           },
           {
-            label: 'Downloads Showcase',
+            label: 'Downloads',
             onPress: () => navigateWithCascade('Downloads'),
           },
           {
-            label: 'History (3D Spiral)',
+            label: 'History',
             onPress: () => navigateWithCascade('History'),
           },
           {
-            label: 'Theme Studio (Arc Dial)',
+            label: 'Theme Studio',
             onPress: () => navigateWithCascade('Theme'),
+          },
+          {
+            label: 'About Us',
+            onPress: () => navigateWithCascade('About'),
           },
           {
             label: 'Settings',
@@ -504,10 +508,6 @@ export default function HomeScreen() {
           {
             label: 'Check for Updates',
             onPress: handleManualCheckUpdate,
-          },
-          {
-            label: 'About AnyFetch',
-            onPress: () => navigateWithCascade('About'),
           },
         ]}
         githubCard={false}

@@ -45,7 +45,6 @@ import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../theme/ThemeContext';
 import { FONTS } from '../theme/typography';
 import { useDownloadHistory } from '../hooks/useDownloadHistory';
-import BottomTabBar, { TabRoute } from '../components/navigation/BottomTabBar';
 import {
   useCascadeNavigation,
   useCascadeBackTransition,
@@ -98,11 +97,6 @@ export default function AboutScreen() {
     Linking.openURL(url).catch(() => {});
   };
 
-  const handleSelectTab = (tab: TabRoute) => {
-    if (tab === 'About') return;
-    navigateWithCascade(tab);
-  };
-
   return (
     <View style={s.root}>
       {/* ═══ TOP APP BAR ═══ */}
@@ -143,7 +137,7 @@ export default function AboutScreen() {
         contentContainerStyle={[
           s.scrollContent,
           {
-            paddingBottom: Math.max(insets.bottom + 130, 140),
+            paddingBottom: Math.max(insets.bottom + 28, 40),
           },
         ]}
         showsVerticalScrollIndicator={false}
@@ -433,13 +427,6 @@ export default function AboutScreen() {
           Crafted with care • Free and Open Source forever.
         </Text>
       </ScrollView>
-
-      {/* ═══ BOTTOM TAB BAR DOCK ═══ */}
-      <BottomTabBar
-        activeTab="About"
-        onSelectTab={handleSelectTab}
-        downloadsCount={history.length}
-      />
     </View>
   );
 }

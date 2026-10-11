@@ -11,11 +11,11 @@
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Home, Download, Clock, InfoCircle, Setting2 } from 'reicon-react-native';
+import { Home, Download, Clock, Setting2 } from 'reicon-react-native';
 import { useAppTheme } from '../../theme/ThemeContext';
 import FluidTabs, { FluidTabItem } from './FluidTabs';
 
-export type TabRoute = 'Home' | 'Downloads' | 'History' | 'About' | 'Settings';
+export type TabRoute = 'Home' | 'Downloads' | 'History' | 'Settings';
 
 export interface BottomTabBarProps {
   activeTab: TabRoute;
@@ -46,10 +46,6 @@ export function BottomTabBar({
       icon: ({ size, color }) => <Clock size={size} color={color} />,
     },
     {
-      id: 'About',
-      icon: ({ size, color }) => <InfoCircle size={size} color={color} />,
-    },
-    {
       id: 'Settings',
       icon: ({ size, color }) => <Setting2 size={size} color={color} />,
     },
@@ -70,9 +66,9 @@ export function BottomTabBar({
         activeColor={themeColors.accent || '#38bdf8'}
         inactiveColor="#71717A"
         pillColor="rgba(255, 255, 255, 0.22)"
-        tabWidth={52}
+        tabWidth={56}
         tabHeight={44}
-        gap={3}
+        gap={4}
       />
     </View>
   );
