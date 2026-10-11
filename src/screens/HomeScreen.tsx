@@ -6,7 +6,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Easing,
   BackHandler,
@@ -22,6 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { customAlert as Alert } from '../components/common/CustomAlert';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVideoPlayer } from 'expo-video';
@@ -49,6 +49,7 @@ import CarouselSwiper from '../components/home/CarouselSwiper';
 import CustomVideoPlayer from '../components/player/CustomVideoPlayer';
 import ProgressBar from '../components/common/ProgressBar';
 import UpdateModal from '../components/UpdateModal';
+
 import BottomTabBar from '../components/navigation/BottomTabBar';
 import FloatingMenu from '../components/navigation/FloatingMenu';
 import { useCascadeNavigation } from '../components/navigation/CascadePageTransition';
@@ -57,6 +58,7 @@ import { ShaderBackground } from '../components/theme/ShaderBackground';
 import { Orb, type OrbVariant } from '../components/theme/Orb';
 import { DEFAULT_THEME } from '../theme/platformColors';
 import { FONTS } from '../theme/typography';
+import { Mascot, MascotGreetingCard, useMascot } from '../features/mascot';
 
 type AppPhase = 'idle' | 'loading' | 'result' | 'error';
 
@@ -68,6 +70,17 @@ export default function HomeScreen() {
   const [phase, setPhase] = useState<AppPhase>('idle');
   const [urlInput, setUrlInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Dynamic Pixel Mascot Companion
+  const {
+    state: mascotState,
+    meta: mascotMeta,
+    triggerDownloadStart,
+    triggerDownloadSuccess,
+    triggerDownloadError,
+    recordActivity,
+    triggerReaction,
+  } = useMascot();
 
   // Detect whether surrounding background shader is light (e.g. Ghost light)
   // to dynamically activate deeper contrasting stops and ambient occlusion
@@ -256,6 +269,7 @@ export default function HomeScreen() {
   // ── Media Extraction ───────────────────────────────────────────────────────
   const handleExtract = useCallback(
     async (overrideUrl?: string) => {
+      recordActivity();
       hideClipboardBanner();
       const raw = (overrideUrl ?? urlInputRef.current).trim();
       const activeUrl = extractUrlFromText(raw);
@@ -291,16 +305,18 @@ export default function HomeScreen() {
           carouselItems: extracted.carouselItems || [],
         });
 
+        triggerReaction('happy', 2500);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         transitionToPhase('result');
       } catch (err: any) {
+        triggerReaction('failed', 3000);
         const msg = err?.message || 'Could not fetch media. Check your network or try again.';
         setErrorMsg(msg);
         setPhase('error');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       }
     },
-    [addHistoryItem, hideClipboardBanner, transitionToPhase]
+    [addHistoryItem, hideClipboardBanner, transitionToPhase, recordActivity, triggerReaction]
   );
 
   // ── Download Execution ─────────────────────────────────────────────────────
@@ -308,37 +324,55 @@ export default function HomeScreen() {
     async (url: string, type: 'video' | 'image' | 'audio', customFilename?: string) => {
       if (!url || downloadSuccess) return;
       setDownloading(true);
+      triggerDownloadStart();
       setProgress(null);
-      const result = await downloadMedia(url, type, p => setProgress(p), customFilename);
-      setDownloading(false);
-      setProgress(null);
+      try {
+        const result = await downloadMedia(url, type, p => setProgress(p), customFilename);
+        setDownloading(false);
+        setProgress(null);
 
-      if (result.ok) {
-        setDownloadSuccess(true);
-        const currentLink = (urlInputRef.current || '').trim();
-        if (result.uri && currentLink) {
-          updateHistoryItem(currentLink, {
-            localUri: result.uri,
-            downloadedAt: Date.now(),
-          });
+        if (result.ok) {
+          triggerDownloadSuccess();
+          setDownloadSuccess(true);
+          const currentLink = (urlInputRef.current || '').trim();
+          if (result.uri && currentLink) {
+            updateHistoryItem(currentLink, {
+              localUri: result.uri,
+              downloadedAt: Date.now(),
+            });
+          }
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          Animated.timing(buttonColorAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: false,
+          }).start();
+
+          setTimeout(() => {
+            setDownloadSuccess(false);
+            buttonColorAnim.setValue(0);
+          }, 3000);
+        } else {
+          triggerDownloadError();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+          Alert.alert('Download Failed', result.error ?? 'Unknown error occurred.');
         }
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        Animated.timing(buttonColorAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: false,
-        }).start();
-
-        setTimeout(() => {
-          setDownloadSuccess(false);
-          buttonColorAnim.setValue(0);
-        }, 3000);
-      } else {
+      } catch (e: any) {
+        setDownloading(false);
+        setProgress(null);
+        triggerDownloadError();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-        Alert.alert('Download Failed', result.error ?? 'Unknown error occurred.');
+        Alert.alert('Download Error', e?.message || 'Download failed.');
       }
     },
-    [downloadSuccess, buttonColorAnim, updateHistoryItem]
+    [
+      downloadSuccess,
+      buttonColorAnim,
+      updateHistoryItem,
+      triggerDownloadStart,
+      triggerDownloadSuccess,
+      triggerDownloadError,
+    ]
   );
 
   const downloadCarouselSelected = useCallback(async () => {
@@ -349,6 +383,7 @@ export default function HomeScreen() {
     }
 
     setDownloading(true);
+    triggerDownloadStart();
     setProgress(null);
     let successCount = 0;
     const currentLink = (urlInputRef.current || '').trim();
@@ -368,13 +403,21 @@ export default function HomeScreen() {
 
     setDownloading(false);
     if (successCount === toDownload.length) {
+      triggerDownloadSuccess();
       setDownloadSuccess(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setTimeout(() => setDownloadSuccess(false), 3000);
     } else {
+      triggerDownloadError();
       Alert.alert('Download Incomplete', `Saved ${successCount} of ${toDownload.length} items.`);
     }
-  }, [carouselItems, updateHistoryItem]);
+  }, [
+    carouselItems,
+    updateHistoryItem,
+    triggerDownloadStart,
+    triggerDownloadSuccess,
+    triggerDownloadError,
+  ]);
 
   // Reset to idle screen
   const reset = useCallback(() => {
@@ -480,28 +523,44 @@ export default function HomeScreen() {
           {
             label: 'Fetch Media',
             onPress: () => {
+              recordActivity();
               if (isResult) reset();
             },
           },
           {
             label: 'Downloads',
-            onPress: () => navigateWithCascade('Downloads'),
+            onPress: () => {
+              recordActivity();
+              navigateWithCascade('Downloads');
+            },
           },
           {
             label: 'History',
-            onPress: () => navigateWithCascade('History'),
+            onPress: () => {
+              recordActivity();
+              navigateWithCascade('History');
+            },
           },
           {
             label: 'Theme Studio',
-            onPress: () => navigateWithCascade('Theme'),
+            onPress: () => {
+              recordActivity();
+              navigateWithCascade('Theme');
+            },
           },
           {
             label: 'About Us',
-            onPress: () => navigateWithCascade('About'),
+            onPress: () => {
+              recordActivity();
+              navigateWithCascade('About');
+            },
           },
           {
             label: 'Settings',
-            onPress: () => navigateWithCascade('Settings'),
+            onPress: () => {
+              recordActivity();
+              navigateWithCascade('Settings');
+            },
           },
         ]}
         secondaryLinks={[
@@ -528,11 +587,14 @@ export default function HomeScreen() {
             contentContainerStyle={[
               s.idleContent,
               {
-                paddingTop: insets.top + 116,
+                paddingTop: insets.top + 104,
                 paddingBottom: Math.max(insets.bottom, 16) + 80,
               },
             ]}
             keyboardShouldPersistTaps="handled">
+            {/* Tasteful Return-after-absence greeting banner if returning after 24h+ */}
+            <MascotGreetingCard />
+
             {/* Center OkLab WebGL Orb */}
             <View style={s.centerSection}>
               <View style={s.circleWrapper}>
@@ -555,6 +617,8 @@ export default function HomeScreen() {
                   ? 'Tap to process link'
                   : 'Copy link & tap orb'}
               </Text>
+
+
             </View>
 
             {/* Input Container */}
@@ -720,7 +784,18 @@ export default function HomeScreen() {
                     <Text style={s.hlsTxt}>{singleResult.hlsNote}</Text>
                   </View>
                 ) : downloading ? (
-                  <ProgressBar progress={progress} />
+                  <View style={{ width: '100%', gap: 8 }}>
+                    <View style={s.resultMascotRow}>
+                      <Mascot state={mascotState} size={30} animated showBadgeFrame={false} />
+                      <View style={s.resultMascotTextWrap}>
+                        <Text style={s.resultMascotTitle}>Downloading Media…</Text>
+                        <Text style={[s.resultMascotDesc, { color: mascotMeta.moodBadgeColor }]}>
+                          {mascotMeta.label}
+                        </Text>
+                      </View>
+                    </View>
+                    <ProgressBar progress={progress} />
+                  </View>
                 ) : (
                   <Pressable
                     style={{ width: '100%', marginTop: 8 }}
@@ -806,6 +881,7 @@ export default function HomeScreen() {
         onDismiss={() => setUpdateModalVisible(false)}
       />
 
+
       {/* Floating Bottom Navigation */}
       <BottomTabBar
         activeTab="Home"
@@ -844,6 +920,33 @@ const s = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     letterSpacing: 1.5,
+  },
+
+  resultMascotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 6,
+  },
+  resultMascotTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  resultMascotTitle: {
+    fontFamily: FONTS.sans,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  resultMascotDesc: {
+    fontFamily: FONTS.sans,
+    fontSize: 11,
+    fontWeight: '500',
   },
   mainWrapper: {
     flex: 1,

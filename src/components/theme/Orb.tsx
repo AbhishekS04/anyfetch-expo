@@ -16,7 +16,6 @@ import {
   StyleSheet,
   Pressable,
   Animated,
-  ActivityIndicator,
   ViewStyle,
   StyleProp,
 } from 'react-native';
@@ -703,13 +702,6 @@ export const Orb: React.FC<OrbProps> = ({
           style={[styles.glCanvas, { width: size, height: size }]}
           onContextCreate={onContextCreate}
         />
-
-        {/* ─── Subtle Loading Indicator (Only during active extraction) ─── */}
-        {isLoading && (
-          <View style={styles.centerOverlay} pointerEvents="none">
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          </View>
-        )}
       </Pressable>
     </Animated.View>
   );
@@ -731,11 +723,5 @@ const styles = StyleSheet.create({
   },
   glCanvas: {
     backgroundColor: 'transparent',
-  },
-  centerOverlay: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
   },
 });

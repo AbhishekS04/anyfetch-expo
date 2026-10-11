@@ -39,6 +39,7 @@ import {
   Link,
   Flash,
   Download,
+  Sparkles,
 } from 'reicon-react-native';
 import * as Haptics from 'expo-haptics';
 
@@ -52,11 +53,12 @@ import {
 import GithubCard from '../components/common/GithubCard';
 import TwitterCard from '../components/common/TwitterCard';
 import CircuitBoard from '../components/common/CircuitBoard';
+import { getCurrentAppVersion } from '../services/githubUpdate';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CIRCUIT_WIDTH = Math.min(Math.max(SCREEN_WIDTH - 76, 280), 380);
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = getCurrentAppVersion();
 const GITHUB_REPO = 'AbhishekS04/anyfetch-expo';
 const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
 const TWITTER_URL = 'https://x.com/abhi3hekk';
@@ -156,9 +158,19 @@ export default function AboutScreen() {
           </Text>
 
           <View style={s.metaPillRow}>
-            <View style={s.metaPill}>
-              <Text style={s.metaPillText}>v{APP_VERSION}</Text>
-            </View>
+            <TouchableOpacity
+              style={[s.metaPill, { borderColor: `${appColors.accent}44`, backgroundColor: `${appColors.accent}12` }]}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                navigation.navigate('WhatsNew');
+              }}
+              activeOpacity={0.7}
+            >
+              <Sparkles size={11} color={appColors.accent} style={{ marginRight: 4 }} />
+              <Text style={[s.metaPillText, { color: appColors.accent, fontWeight: '700' }]}>
+                v{APP_VERSION} What's New
+              </Text>
+            </TouchableOpacity>
             <View style={s.metaPill}>
               <Text style={s.metaPillText}>100% Local</Text>
             </View>

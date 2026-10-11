@@ -7,12 +7,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, AppState } from 'react-native';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import { recordAppUsage } from './src/services/dynamicLauncherIcon';
 
 import HomeScreen from './src/screens/HomeScreen';
+import WhatsNewScreen from './src/screens/WhatsNewScreen';
 import DownloadsScreen from './src/screens/DownloadsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ThemeScreen from './src/screens/ThemeScreen';
@@ -20,15 +22,18 @@ import AboutScreen from './src/screens/AboutScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import { AppThemeProvider } from './src/theme/ThemeContext';
 import { FONTS } from './src/theme/typography';
+import { CustomAlertProvider } from './src/components/common/CustomAlert';
 import {
   CascadeTransitionProvider,
   navigationRef,
 } from './src/components/navigation/CascadePageTransition';
+import { shouldShowWhatsNew } from './src/services/whatsNewService';
 
-// Keep native splash screen visible while fonts load
+// Keep native splash screen visible while fonts load & startup gate resolves
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export type RootStack = {
+  WhatsNew: undefined;
   Home: undefined;
   Downloads: undefined;
   History: undefined;
@@ -63,13 +68,45 @@ export default function App() {
     'GeneralSans-Semibold': require('./assets/fonts/GeneralSans-Semibold.ttf'),
   });
 
-  useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [fontsLoaded, fontError]);
+  const [initialRoute, setInitialRoute] = useState<'Home' | 'WhatsNew' | null>(null);
 
-  if (!fontsLoaded && !fontError) {
+  // Evaluate What's New startup gate before any screen renders
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const decision = await shouldShowWhatsNew();
+        if (mounted) {
+          setInitialRoute(decision.shouldShow ? 'WhatsNew' : 'Home');
+        }
+      } catch (err) {
+        if (mounted) setInitialRoute('Home');
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const isReady = (fontsLoaded || fontError) && initialRoute !== null;
+
+  useEffect(() => {
+    if (isReady) {
+      SplashScreen.hideAsync().catch(() => {});
+      recordAppUsage().catch(() => {});
+    }
+  }, [isReady]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        recordAppUsage().catch(() => {});
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
+  if (!isReady || !initialRoute) {
     return null;
   }
 
@@ -80,6 +117,7 @@ export default function App() {
         <CascadeTransitionProvider>
           <NavigationContainer ref={navigationRef} theme={NAV_THEME}>
             <Stack.Navigator
+              initialRouteName={initialRoute}
               screenOptions={{
                 headerStyle: { backgroundColor: '#000000' },
                 headerTintColor: '#ffffff',
@@ -90,6 +128,15 @@ export default function App() {
                 animationDuration: 260,
                 gestureEnabled: true,
               }}>
+              <Stack.Screen
+                name="WhatsNew"
+                component={WhatsNewScreen}
+                options={{
+                  headerShown: false,
+                  gestureEnabled: false,
+                  contentStyle: { backgroundColor: '#000000' },
+                }}
+              />
               <Stack.Screen
                 name="Home"
                 component={HomeScreen}
@@ -123,6 +170,7 @@ export default function App() {
             </Stack.Navigator>
           </NavigationContainer>
         </CascadeTransitionProvider>
+        <CustomAlertProvider />
       </AppThemeProvider>
     </SafeAreaProvider>
   );

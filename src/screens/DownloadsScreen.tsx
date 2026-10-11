@@ -24,7 +24,6 @@ import {
   Pressable,
   TouchableOpacity,
   Image,
-  Alert,
   Linking,
   BackHandler,
   ScrollView,
@@ -35,6 +34,7 @@ import {
   PanResponder,
   Easing,
 } from 'react-native';
+import { customAlert as Alert } from '../components/common/CustomAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -60,6 +60,7 @@ import * as Haptics from 'expo-haptics';
 
 import { useDownloadHistory, HistoryItem } from '../hooks/useDownloadHistory';
 import { downloadMedia, DOWNLOADS_DIRECTORY } from '../utils/download';
+import { mascotController } from '../features/mascot';
 import BottomTabBar, { TabRoute } from '../components/navigation/BottomTabBar';
 import {
   useCascadeNavigation,
@@ -712,9 +713,11 @@ export default function DownloadsScreen() {
     if (!directUrl) return;
 
     setIsCheckingMedia(true);
+    mascotController.onDownloadStart();
     try {
       const res = await downloadMedia(directUrl, 'video');
       if (res.ok && res.uri) {
+        mascotController.onDownloadSuccess();
         if (media.historyRef?.url) {
           updateHistoryItem(media.historyRef.url, {
             localUri: res.uri,
@@ -727,9 +730,11 @@ export default function DownloadsScreen() {
         setIsPlayingInline(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       } else {
+        mascotController.onDownloadError();
         Alert.alert('Download Failed', res.error || 'Could not save video to device.');
       }
     } catch (e: any) {
+      mascotController.onDownloadError();
       Alert.alert('Download Error', e?.message || 'Download failed.');
     } finally {
       setIsCheckingMedia(false);

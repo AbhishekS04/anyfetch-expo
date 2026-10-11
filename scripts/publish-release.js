@@ -87,21 +87,30 @@ try {
     stdio: 'pipe',
   });
 
+  const isPrerelease =
+    versionTag.toLowerCase().includes('beta') ||
+    versionTag.toLowerCase().includes('alpha') ||
+    versionTag.toLowerCase().includes('rc') ||
+    process.argv.includes('--prerelease') ||
+    process.argv.includes('--beta');
+
   if (checkRelease.status === 0) {
     console.log(`[Info] Release ${versionTag} already exists on GitHub. Uploading/replacing APK asset...`);
     execSync(`gh release upload "${versionTag}" "${apkPath}" --clobber`, {
       cwd: rootDir,
       stdio: 'inherit',
     });
-    console.log(`[Info] Updating release notes and ensuring release ${versionTag} is published (draft=false) and marked latest...`);
-    execSync(`gh release edit "${versionTag}" --draft=false --latest --notes-file "${changelogFile}"`, {
+    console.log(`[Info] Updating release notes and ensuring release ${versionTag} is published (draft=false, prerelease=${isPrerelease})...`);
+    const editFlags = isPrerelease ? '--draft=false --prerelease' : '--draft=false --latest';
+    execSync(`gh release edit "${versionTag}" ${editFlags} --notes-file "${changelogFile}"`, {
       cwd: rootDir,
       stdio: 'inherit',
     });
   } else {
-    console.log(`[Info] Creating new GitHub Release ${versionTag}...`);
+    console.log(`[Info] Creating new GitHub Release ${versionTag} (prerelease: ${isPrerelease})...`);
+    const createFlags = isPrerelease ? '--prerelease' : '--latest';
     execSync(
-      `gh release create "${versionTag}" "${apkPath}" --title "AnyFetch ${versionTag}" --notes-file "${changelogFile}" --latest`,
+      `gh release create "${versionTag}" "${apkPath}" --title "AnyFetch ${versionTag}" --notes-file "${changelogFile}" ${createFlags}`,
       { cwd: rootDir, stdio: 'inherit' }
     );
   }

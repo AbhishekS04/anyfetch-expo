@@ -14,10 +14,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   BackHandler,
   Dimensions,
 } from 'react-native';
+import { customAlert as Alert } from '../components/common/CustomAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';

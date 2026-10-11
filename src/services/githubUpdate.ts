@@ -110,13 +110,18 @@ export async function saveGitHubRepo(repoInput: string): Promise<string> {
 }
 
 /**
- * Compare two semver strings: returns true if latest > current
+ * Compare two semver/release strings: returns true if latest > current.
+ * Supports patterns like 1.1.1, 1.5, 1.5-beta, 2, 2.1, 2.5-beta.
  */
 export function isNewerVersion(latest: string, current: string): boolean {
   if (!latest || !current) return false;
   const clean = (v: string) => v.replace(/^v/i, '').trim();
-  const v1Parts = clean(latest).split('.').map(n => parseInt(n, 10) || 0);
-  const v2Parts = clean(current).split('.').map(n => parseInt(n, 10) || 0);
+  const lClean = clean(latest);
+  const cClean = clean(current);
+  if (lClean === cClean) return false;
+
+  const v1Parts = lClean.split('.').map(n => parseInt(n, 10) || 0);
+  const v2Parts = cClean.split('.').map(n => parseInt(n, 10) || 0);
 
   const len = Math.max(v1Parts.length, v2Parts.length);
   for (let i = 0; i < len; i++) {
@@ -125,6 +130,12 @@ export function isNewerVersion(latest: string, current: string): boolean {
     if (num1 > num2) return true;
     if (num1 < num2) return false;
   }
+
+  // If numeric parts are equal, stable release is newer than beta
+  const lIsPre = /[-_](beta|alpha|rc)/i.test(lClean);
+  const cIsPre = /[-_](beta|alpha|rc)/i.test(cClean);
+  if (!lIsPre && cIsPre) return true;
+
   return false;
 }
 

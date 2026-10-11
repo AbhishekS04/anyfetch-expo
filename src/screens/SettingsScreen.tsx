@@ -16,7 +16,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Platform,
   TouchableOpacity,
@@ -27,8 +26,10 @@ import {
   Text,
   TextInput,
   View,
+  Image,
   BackHandler,
 } from 'react-native';
+import { customAlert as Alert } from '../components/common/CustomAlert';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -90,6 +91,7 @@ import { FONTS } from '../theme/typography';
 import BottomTabBar, { TabRoute } from '../components/navigation/BottomTabBar';
 import { useDownloadHistory } from '../hooks/useDownloadHistory';
 
+
 const SETTINGS_FILE = (documentDirectory ?? '') + 'settings.json';
 
 export default function SettingsScreen() {
@@ -133,6 +135,8 @@ export default function SettingsScreen() {
   const [cloudApiUrl, setCloudApiUrl] = useState(DEFAULT_API_URL);
   const [cloudApiHealth, setCloudApiHealth] = useState<ApiHealthStatus | null>(null);
   const [isTestingCloudApi, setIsTestingCloudApi] = useState(false);
+
+
 
   const runningVersion = getCurrentAppVersion();
 
@@ -1571,4 +1575,6 @@ const s = StyleSheet.create({
     maxWidth: 280,
     lineHeight: 16,
   },
+
+  /* ── Dynamic Icon Styles ── */
 });
